@@ -33,3 +33,6 @@ steps:
       - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
       - '--region'
       - '${_LOCATION}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

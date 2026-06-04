@@ -9,7 +9,7 @@ substitutions:
   _REPO_NAME: 'gcf-artifacts'
   _IMAGE_NAME: 'onemarketer'
   _SERVICE_NAME: 'dev-utpbi-onemarketer'
-  _SERVICE_ACCOUNT: 'dev-utpbi-onemarketer-process@dev-utpbi-data-operation.iam.gserviceaccount.com'
+  _SERVICE_ACCOUNT: 'dev-utpbi-data-operation@appspot.gserviceaccount.com'
   _MEMORY: '2Gi'
   _TIMEOUT: '3600'
   _CPU: '2'

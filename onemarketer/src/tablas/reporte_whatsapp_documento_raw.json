@@ -1,0 +1,16 @@
+[
+  {"name": "fecha_evento", "type": "DATE", "mode": "REQUIRED"},
+  {"name": "fecha_procesamiento", "type": "TIMESTAMP", "mode": "NULLABLE"},
+  {"name": "idcase", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "idmessage", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "waid", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "mime", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "media_type", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "content_source", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "source_url", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "gcs_uri", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "file_name", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "file_size_bytes", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "download_status", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "error_message", "type": "STRING", "mode": "NULLABLE"}
+]

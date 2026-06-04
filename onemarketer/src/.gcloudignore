@@ -1,0 +1,32 @@
+# Archivos de desarrollo
+*.pyc
+__pycache__/
+*.log
+*.tmp
+.DS_Store
+.vscode/
+.idea/
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Archivos de datos
+*.jsonl
+*.json
+!config/config.json
+!tablas/*.json
+
+# Archivos de documentación
+*.md
+!cloud_function_usage.md
+
+# Archivos de testing
+test_*
+*_test.py
+test/
+
+# Archivos de configuración local
+.env
+.env.local

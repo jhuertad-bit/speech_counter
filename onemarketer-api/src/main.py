@@ -371,7 +371,7 @@ def load_table_schema(table_name: str) -> List[Dict[str, Any]]:
     Returns:
         List[Dict[str, Any]]: Esquema de la tabla
     """
-    schema_file = f"tablas/{table_name}.json"
+    schema_file = f"src/tablas/{table_name}.json"
     try:
         with open(schema_file, 'r', encoding='utf-8') as f:
             schema = json.load(f)

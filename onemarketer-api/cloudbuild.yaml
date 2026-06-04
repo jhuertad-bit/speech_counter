@@ -1,0 +1,28 @@
+steps:
+  # 1. Construir la imagen usando variables (_LOCATION, _PROJECT_ID, _REPO_NAME, _IMAGE_NAME)
+  - name: 'gcr.io/cloud-builders/docker'
+    dir: 'onemarketer-api'
+    args: [
+      'build',
+      '-t', '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA',
+      '.'
+    ]
+
+  # 2. Subir la imagen a Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'push',
+      '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
+    ]
+
+  # 3. Desplegar en Cloud Run con el nombre de servicio dinámico
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE_NAME}' # Aquí se define si es dev-* o prd-*
+      - '--image'
+      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
+      - '--region'
+      - '${_LOCATION}'

@@ -1,0 +1,62 @@
+[
+  {
+    "mode": "NULLABLE",
+    "name": "status_description",
+    "type": "STRING",
+    "description": "Descripción: Nos muestra un detalle sobre el motivo de la pausa."
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "session_hash",
+    "type": "STRING",
+    "description": "Hash Connection: Esta es la llave de la sesión. La importancia de este campo va dada a que es un indicador único de sesión y se crea cada vez que un usuario ingresa al sistema. Si un agente está conectado en la mañana luego se desconecta para ingresar nuevamente en la tarde, este contará con dos Hash distintos."
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "has_open_cases",
+    "type": "STRING",
+    "description": "Casos abiertos: En el caso que el estado sea de pausa, se indica si tenía casos asignados al momento de ausentarse."
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "begin_time",
+    "type": "TIMESTAMP",
+    "description": "Inicio: Fecha hora de inicio del evento."
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "end_time",
+    "type": "TIMESTAMP",
+    "description": "Término: Fecha hora de término evento."
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "ip_address",
+    "type": "STRING",
+    "description": "IP: Id del equipo desde donde se conectó el operador."
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "total_time",
+    "type": "STRING",
+    "description": "Duración: Cantidad de horas, minutos y segundos de duración del evento."
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "user",
+    "type": "STRING",
+    "description": "Nombre de usuario del asesor"
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "name",
+    "type": "STRING",
+    "description": "Nombre del Asesor: Nombre de la persona que utiliza un operador para ingresar a la plataforma, esto se da sólo en el caso de operadores genéricos."
+  },
+  {
+    "mode": "NULLABLE",
+    "name": "status",
+    "type": "STRING",
+    "description": "DEPRECADO EN DOCUMENTACION API: Revisar"
+  }
+]

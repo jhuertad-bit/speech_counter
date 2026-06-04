@@ -4,12 +4,14 @@ WORKDIR /app
 
 # Instalar dependencias
 COPY src/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt uvicorn
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar todo el código
 COPY . .
 
+WORKDIR /app/src
+
 EXPOSE 8080
 
-# Ignoramos el if __name__ y levantamos la app con uvicorn en el puerto de GCP
-CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port $PORT"]
+# Cloud Run exige escuchar en $PORT (8080). main() es handler HTTP de Cloud Functions.
+CMD ["sh", "-c", "exec functions-framework --target=main --port=${PORT:-8080}"]

@@ -4,6 +4,9 @@ substitutions:
   _REPO_NAME: 'gcf-artifacts'
   _IMAGE_NAME: 'onemarketer-api'
   _SERVICE_NAME: 'onemarketer-api'
+  _MEMORY: '512Mi'
+  _TIMEOUT: '540'
+  _MAX_INSTANCES: '10'
 
 steps:
   # 1. Construir la imagen usando variables (_LOCATION, _PROJECT_ID, _REPO_NAME, _IMAGE_NAME)
@@ -33,6 +36,13 @@ steps:
       - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
       - '--region'
       - '${_LOCATION}'
+      - '--memory'
+      - '${_MEMORY}'
+      - '--timeout'
+      - '${_TIMEOUT}'
+      - '--max-instances'
+      - '${_MAX_INSTANCES}'
+      - '--allow-unauthenticated'
 
 options:
   logging: CLOUD_LOGGING_ONLY

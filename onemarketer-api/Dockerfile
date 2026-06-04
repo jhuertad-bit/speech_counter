@@ -12,4 +12,4 @@ COPY . .
 EXPOSE 8080
 
 # Ignoramos el if __name__ y levantamos la app con uvicorn en el puerto de GCP
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
+CMD ["sh", "-c", "uvicorn src.main:app --host 0.0.0.0 --port $PORT"]

@@ -26,6 +26,10 @@ REGION="${GCP_REGION:-$REGION}"
 SCHEDULER_NAME="${GCP_SCHEDULER_NAME:-$SCHEDULER_NAME}"
 FUNCTION_NAME="${GCP_FUNCTION_NAME:-$FUNCTION_NAME}"
 
+SERVICE_ACCOUNT_NAME=$(jq -r '.gcp.service_account_name' "$CONFIG_FILE")
+SERVICE_ACCOUNT_NAME="${GCP_SERVICE_ACCOUNT_NAME:-$SERVICE_ACCOUNT_NAME}"
+INVOKER_SA="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+
 SCHEDULE="${SCHEDULE:-0 4 * * *}"
 TIMEZONE="${TIMEZONE:-America/Lima}"
 PAYLOAD="${PAYLOAD:-{\"current_date\": \"TODAY\", \"days_back\": 3}}"
@@ -52,6 +56,8 @@ gcloud scheduler jobs create http "$SCHEDULER_NAME" \
   --http-method=POST \
   --headers="Content-Type=application/json" \
   --message-body="$PAYLOAD" \
-  --description="ETL OneMarketer (reporte chats + medios) vía Cloud Function"
+  --oidc-service-account-email="$INVOKER_SA" \
+  --oidc-token-audience="$FUNCTION_URL" \
+  --description="ETL OneMarketer (reporte chats + medios) vía Cloud Function (OIDC)"
 
-echo "Scheduler $SCHEDULER_NAME creado → $FUNCTION_URL"
+echo "Scheduler $SCHEDULER_NAME creado → $FUNCTION_URL (invoker: $INVOKER_SA)"

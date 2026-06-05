@@ -1,14 +1,10 @@
 # Pipeline: Cloud Functions Gen2 (HTTP) desde onemarketer/src.
 #
-# Variables de ambiente (dev/prd): créalas en el ACTIVADOR de Cloud Build
-#   Cloud Build → Activadores → [tu trigger] → Variables de sustitución
-#
-# Obligatorias en el activador:
-#   _PROJECT_ID, _FUNCTION_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME,
-#   _DATASET_ID, _SCHEDULER_NAME, _SERVICE_ACCOUNT_NAME
-# Opcional: _LOCATION (default us-central1)
-#
-# El deploy usa ${_...} en gcloud; las de runtime se pasan a la función con --set-env-vars.
+# Variables de ambiente (dev/prd): ACTIVADOR de Cloud Build → Variables de sustitución
+#   Obligatorias: _PROJECT_ID, _FUNCTION_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME,
+#                 _DATASET_ID, _SCHEDULER_NAME, _SERVICE_ACCOUNT_NAME
+#   Opcionales:   _LOCATION, _RUNTIME, _MEMORY, _TIMEOUT, _CPU, _MAX_INSTANCES, _CONCURRENCY
+#                 _ALLOW_UNAUTHENTICATED (default false; true requiere run.services.setIamPolicy)
 substitutions:
   _LOCATION: 'us-central1'
   _RUNTIME: 'python310'
@@ -18,29 +14,30 @@ substitutions:
   _CPU: '2'
   _MAX_INSTANCES: '3'
   _CONCURRENCY: '1'
+  _ALLOW_UNAUTHENTICATED: 'false'
 
 steps:
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - 'functions'
-      - 'deploy'
-      - '${_FUNCTION_NAME}'
-      - '--gen2'
-      - '--project=${_PROJECT_ID}'
-      - '--region=${_LOCATION}'
-      - '--runtime=${_RUNTIME}'
-      - '--source=onemarketer/src'
-      - '--entry-point=${_ENTRY_POINT}'
-      - '--trigger-http'
-      - '--allow-unauthenticated'
-      - '--memory=${_MEMORY}'
-      - '--timeout=${_TIMEOUT}'
-      - '--cpu=${_CPU}'
-      - '--max-instances=${_MAX_INSTANCES}'
-      - '--concurrency=${_CONCURRENCY}'
-      - '--service-account=${_SERVICE_ACCOUNT}'
-      - '--set-env-vars=GCP_PROJECT_ID=${_PROJECT_ID},GCP_BUCKET_NAME=${_BUCKET_NAME},GCP_DATASET_ID=${_DATASET_ID},GCP_REGION=${_LOCATION},GCP_FUNCTION_NAME=${_FUNCTION_NAME},GCP_SCHEDULER_NAME=${_SCHEDULER_NAME},GCP_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}'
+      - 'onemarketer/scripts/cloudbuild_deploy.sh'
+    env:
+      - '_PROJECT_ID=${_PROJECT_ID}'
+      - '_FUNCTION_NAME=${_FUNCTION_NAME}'
+      - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '_BUCKET_NAME=${_BUCKET_NAME}'
+      - '_DATASET_ID=${_DATASET_ID}'
+      - '_SCHEDULER_NAME=${_SCHEDULER_NAME}'
+      - '_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}'
+      - '_LOCATION=${_LOCATION}'
+      - '_RUNTIME=${_RUNTIME}'
+      - '_ENTRY_POINT=${_ENTRY_POINT}'
+      - '_MEMORY=${_MEMORY}'
+      - '_TIMEOUT=${_TIMEOUT}'
+      - '_CPU=${_CPU}'
+      - '_MAX_INSTANCES=${_MAX_INSTANCES}'
+      - '_CONCURRENCY=${_CONCURRENCY}'
+      - '_ALLOW_UNAUTHENTICATED=${_ALLOW_UNAUTHENTICATED}'
 
 options:
   logging: CLOUD_LOGGING_ONLY

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Crea/actualiza Cloud Scheduler apuntando al servicio Cloud Run (no Cloud Functions).
+# Crea/actualiza Cloud Scheduler apuntando a la Cloud Function Gen2.
 # Ejecutar desde onemarketer/src con: ./scheduler-setup.sh
 set -euo pipefail
 
@@ -17,23 +17,21 @@ fi
 PROJECT_ID=$(jq -r '.gcp.project_id' "$CONFIG_FILE")
 REGION=$(jq -r '.gcp.region' "$CONFIG_FILE")
 SCHEDULER_NAME=$(jq -r '.gcp.scheduler_name' "$CONFIG_FILE")
-SERVICE_NAME=$(jq -r '.gcp.function_name' "$CONFIG_FILE")
-
-# Nombre del servicio Cloud Run (ajusta si difiere del function_name en config)
-CLOUD_RUN_SERVICE="${CLOUD_RUN_SERVICE:-$SERVICE_NAME}"
+FUNCTION_NAME=$(jq -r '.gcp.function_name' "$CONFIG_FILE")
 
 SCHEDULE="${SCHEDULE:-0 4 * * *}"
 TIMEZONE="${TIMEZONE:-America/Lima}"
 PAYLOAD="${PAYLOAD:-{\"current_date\": \"TODAY\", \"days_back\": 3}}"
 
 gcloud config set project "$PROJECT_ID"
-gcloud services enable cloudscheduler.googleapis.com run.googleapis.com
+gcloud services enable cloudscheduler.googleapis.com cloudfunctions.googleapis.com
 
-SERVICE_URL=$(gcloud run services describe "$CLOUD_RUN_SERVICE" \
+FUNCTION_URL=$(gcloud functions describe "$FUNCTION_NAME" \
   --region="$REGION" \
-  --format='value(status.url)')
+  --gen2 \
+  --format='value(serviceConfig.uri)')
 
-echo "Cloud Run URL: $SERVICE_URL"
+echo "Cloud Function URL: $FUNCTION_URL"
 
 if gcloud scheduler jobs describe "$SCHEDULER_NAME" --location="$REGION" &>/dev/null; then
   gcloud scheduler jobs delete "$SCHEDULER_NAME" --location="$REGION" --quiet
@@ -43,10 +41,10 @@ gcloud scheduler jobs create http "$SCHEDULER_NAME" \
   --location="$REGION" \
   --schedule="$SCHEDULE" \
   --time-zone="$TIMEZONE" \
-  --uri="$SERVICE_URL" \
+  --uri="$FUNCTION_URL" \
   --http-method=POST \
   --headers="Content-Type=application/json" \
   --message-body="$PAYLOAD" \
-  --description="ETL OneMarketer (reporte chats + medios) vía Cloud Run"
+  --description="ETL OneMarketer (reporte chats + medios) vía Cloud Function"
 
-echo "Scheduler $SCHEDULER_NAME creado → $SERVICE_URL"
+echo "Scheduler $SCHEDULER_NAME creado → $FUNCTION_URL"

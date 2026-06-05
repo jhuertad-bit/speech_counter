@@ -181,7 +181,8 @@ def _upload_blob(
 ) -> str:
     project_id = gcp_config["project_id"]
     bucket_name = gcp_config["bucket_name"]
-    blob_name = f"{gcs_prefix.rstrip('/')}/fecha_evento={fecha_evento}/{object_name}"
+    # gs://{bucket}/{gcs_path}/{fecha}/media/{archivo}
+    blob_name = f"{gcs_prefix.rstrip('/')}/{fecha_evento}/media/{object_name}"
 
     client = storage.Client(project=project_id)
     bucket = client.bucket(bucket_name)

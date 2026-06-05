@@ -1,60 +1,41 @@
-# Pipeline: build → Artifact Registry → Cloud Run (servicio HTTP).
+# Pipeline: Cloud Functions Gen2 (HTTP) desde onemarketer/src.
 # Trigger en GCP: archivo = onemarketer/cloudbuild.yaml, filtro opcional onemarketer/**
 #
-# Este workload es un job batch invocado por POST (p. ej. Cloud Scheduler).
-# Cloud Functions Gen2 usa la misma infra (Cloud Run); aquí despliegas el contenedor directo.
+# Job batch invocado por POST (p. ej. Cloud Scheduler).
 substitutions:
   _LOCATION: 'us-central1'
   _PROJECT_ID: 'dev-utpbi-data-operation'
-  _REPO_NAME: 'gcf-artifacts'
-  _IMAGE_NAME: 'onemarketer'
-  _SERVICE_NAME: 'dev-utpbi-onemarketer'
+  _FUNCTION_NAME: 'dev-utpbi-onemarketer-reporte-chats'
   _SERVICE_ACCOUNT: 'dev-utpbi-data-operation@appspot.gserviceaccount.com'
+  _RUNTIME: 'python310'
+  _ENTRY_POINT: 'main'
   _MEMORY: '2Gi'
-  _TIMEOUT: '3600'
+  _TIMEOUT: '3600s'
   _CPU: '2'
   _MAX_INSTANCES: '3'
   _CONCURRENCY: '1'
 
 steps:
-  - name: 'gcr.io/cloud-builders/docker'
-    dir: 'onemarketer'
-    args:
-      - 'build'
-      - '-t'
-      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-      - '.'
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
-      - 'run'
+      - 'functions'
       - 'deploy'
-      - '${_SERVICE_NAME}'
-      - '--image'
-      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-      - '--region'
-      - '${_LOCATION}'
-      - '--platform'
-      - 'managed'
-      - '--memory'
-      - '${_MEMORY}'
-      - '--timeout'
-      - '${_TIMEOUT}'
-      - '--cpu'
-      - '${_CPU}'
-      - '--max-instances'
-      - '${_MAX_INSTANCES}'
-      - '--concurrency'
-      - '${_CONCURRENCY}'
-      - '--service-account'
-      - '${_SERVICE_ACCOUNT}'
+      - '${_FUNCTION_NAME}'
+      - '--gen2'
+      - '--project=${_PROJECT_ID}'
+      - '--region=${_LOCATION}'
+      - '--runtime=${_RUNTIME}'
+      - '--source=onemarketer/src'
+      - '--entry-point=${_ENTRY_POINT}'
+      - '--trigger-http'
       - '--allow-unauthenticated'
+      - '--memory=${_MEMORY}'
+      - '--timeout=${_TIMEOUT}'
+      - '--cpu=${_CPU}'
+      - '--max-instances=${_MAX_INSTANCES}'
+      - '--concurrency=${_CONCURRENCY}'
+      - '--service-account=${_SERVICE_ACCOUNT}'
 
 options:
   logging: CLOUD_LOGGING_ONLY

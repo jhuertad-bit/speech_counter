@@ -1,12 +1,12 @@
 {
   "gcp":{
-     "project_id":"prd-utpbi-data-operation",
-     "bucket_name":"prd-utp-stg-onemarketer-k9v3x7p2q8t4m1j5w0n6z",
+     "project_id":"dev-utpbi-data-operation",
+     "bucket_name":"dev-utp-stg-onemarketer-k7m4n9p2q8r5t3v6w1x0",
      "dataset_id":"raw_onemarketer",
      "region":"us-central1",
-     "function_name":"prd-utpbi-onemarketer-reporte-chats",
-     "scheduler_name":"prd-sch-onemarketer-reporte-chats",
-     "service_account_name":"prd-utpbi-onemarketer-process"
+     "function_name":"dev-utpbi-onemarketer-reporte-chats",
+     "scheduler_name":"dev-sch-onemarketer-reporte-chats",
+     "service_account_name":"dev-utpbi-onemarketer-process"
   },
   "reporteChats":{
      "enabled":true,
@@ -50,9 +50,9 @@
      "enabled":true,
      "source_table":"reporteChats",
      "api":{
-        "base_url":"https://console.onemarketer.cl/utp_pregrado_test/descargachats/getChats.php",
+        "base_url":"https://utp.onemarketer.cl/utp_pregrado/utp-pregrado-api-descarga-chats/getChats.php",
         "context":1,
-        "auth_mode":"header",
+        "auth_mode":"query",
         "key":"key_tJ7IFTgVhMMQq3aD5WA1zYegVsQWqwMC",
         "timeout":300,
         "max_retries":3,
@@ -66,7 +66,7 @@
      },
      "storage":{
         "upload_gcs":true,
-        "gcs_path":"utp_pregrado/whatsapp_documentos_raw",
+        "gcs_path":"utp_pregrado_endpoint/reporteChats/services/getChats",
         "save_local_files":false,
         "local_dir":"descarga"
      },

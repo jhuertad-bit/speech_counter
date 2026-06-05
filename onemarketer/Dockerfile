@@ -13,5 +13,5 @@ WORKDIR /app/src
 
 EXPOSE 8080
 
-# Cloud Run exige escuchar en $PORT (8080). main() es handler HTTP de Cloud Functions.
+# Imagen opcional para pruebas locales con functions-framework (no usada en cloudbuild).
 CMD ["sh", "-c", "exec functions-framework --target=main --port=${PORT:-8080}"]

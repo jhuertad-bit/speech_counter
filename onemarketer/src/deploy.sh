@@ -1,7 +1,7 @@
 #!/bin/bash
 # -*- coding: utf-8 -*-
-# Despliegue legacy vía Cloud Functions Gen2 (gcloud functions deploy).
-# En este monorepo el camino recomendado es Cloud Run: onemarketer/cloudbuild.yaml + scheduler-setup.sh
+# Despliegue manual vía gcloud functions deploy (alternativa local).
+# En CI/CD usar: onemarketer/cloudbuild.yaml + scheduler-setup.sh
 # Script de despliegue para Cloud Function OneMarketer
 # Despliega la función con todas las configuraciones necesarias y opcionalmente configura el scheduler
 

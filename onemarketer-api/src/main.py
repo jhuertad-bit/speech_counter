@@ -7,8 +7,6 @@ Recibe día actual y cantidad de días hacia atrás para reprocesar
 
 import json
 import requests
-import hashlib
-import pytz
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Set
 import os
@@ -17,70 +15,16 @@ from google.cloud import storage
 from google.cloud import bigquery
 import re
 
-
-def calculate_sha256(text: str) -> str:
-    """Calcula el hash SHA256 de un texto"""
-    return hashlib.sha256(text.encode('utf-8')).hexdigest()
-
-
-def calculate_login(user: str, password: str) -> str:
-    """Calcula el hash de login"""
-    login_string = f"{user}:{password}"
-    return calculate_sha256(login_string)
-
-
-def calculate_sig(user: str) -> str:
-    """Calcula la firma con timestamp actual"""
-    gmt_minus_3 = pytz.timezone('America/Sao_Paulo')
-    timestamp = datetime.now(gmt_minus_3)
-    formatted_time = timestamp.strftime('%Y-%m-%d %H:%M')
-    sig_string = f"day={formatted_time}&user={user}"
-    return calculate_sha256(sig_string)
-
-
-def calculate_x_signature(login: str, sig: str) -> str:
-    """Calcula el X-Signature final"""
-    signature_string = f"login={login}&sig={sig}"
-    return calculate_sha256(signature_string)
+from auth_onemarketer import fetch_access_key
 
 
 def get_access_key() -> str:
-    """Obtiene el access_key para autenticación mediante OAuth"""
-    USER = 'utppregradoapi'
-    PASS = 'utppregradoOM.2O2S'
-
-    # Generar X-Signature para OAuth
-    login = calculate_login(USER, PASS)
-    sig = calculate_sig(USER)
-    x_signature = calculate_x_signature(login, sig)
-
-    # Endpoint OAuth
-    oauth_endpoint = 'https://utp.onemarketer.cl/utp_pregrado/oauth'
-
-    # Headers y datos para OAuth
-    headers = {
-        'X-Signature': x_signature,
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-    data = {
-        'login': login,
-        'sig': sig
-    }
-
+    """Obtiene el access_key para autenticación mediante OAuth."""
     try:
-        print(f"Obteniendo access_key desde OAuth...")
-        response = requests.post(oauth_endpoint, headers=headers, data=data, timeout=30)
-        response.raise_for_status()
-
-        oauth_data = response.json()
-        access_key = oauth_data.get('access_key')
-
-        if not access_key:
-            raise ValueError("No se pudo obtener access_key del endpoint OAuth")
-
-        print(f"Access key obtenido exitosamente")
+        print("Obteniendo access_key desde OAuth...")
+        access_key = fetch_access_key(timeout=30)
+        print("Access key obtenido exitosamente")
         return access_key
-
     except Exception as e:
         print(f"Error obteniendo access_key: {e}")
         raise

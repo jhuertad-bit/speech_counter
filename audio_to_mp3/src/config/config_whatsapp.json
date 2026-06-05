@@ -1,0 +1,21 @@
+{
+  "gcp": {
+    "project_id": "prd-utpbi-data-operation",
+    "bucket_name": "prd-utp-stg-whatsapp-conversaciones",
+    "path_audios_input": "data/input/whatsapp_audios_raw/fecha_carga=YYYY-MM-DD",
+    "path_audios_mp3": "data/input/whatsapp_audios_mp3/fecha_carga=YYYY-MM-DD",
+    "cloud_function_name": "prd-utpbi-whatsapp-audio-to-mp3",
+    "service_account_email": "genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com",
+    "region": "us-central1"
+  },
+  "audio": {
+    "supported_extensions": [
+      ".ogg", ".opus", ".wav", ".wave", ".flac", ".m4a", ".aac",
+      ".wma", ".amr", ".3gp", ".mp4", ".webm", ".aiff", ".aif", ".caf", ".mp2"
+    ],
+    "default_bitrate": "128k",
+    "skip_existing_mp3": true,
+    "min_duration_seconds": 0.1,
+    "ffmpeg_timeout_seconds": 300
+  }
+}

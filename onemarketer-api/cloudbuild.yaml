@@ -1,47 +1,46 @@
+# onemarketer-api → Cloud Run
+#
+# Variables de ambiente: ACTIVADOR → Variables de sustitución
+#   Obligatorias: _PROJECT_ID, _SERVICE_NAME, _OAUTH_SECRET
+#   Opcionales:   _LOCATION, _REPO_NAME, _IMAGE_NAME, _MEMORY, _TIMEOUT, _MAX_INSTANCES
+#
+# _OAUTH_SECRET = id del secreto en Secret Manager (ej. dev_secret_onemarketer_api)
+# El JSON del secreto debe tener: {"user":"...","userpassword":"..."}
 substitutions:
   _LOCATION: 'us-central1'
-  _PROJECT_ID: 'dev-utpbi-data-operation'
   _REPO_NAME: 'gcf-artifacts'
   _IMAGE_NAME: 'onemarketer-api'
-  _SERVICE_NAME: 'onemarketer-api'
   _MEMORY: '512Mi'
   _TIMEOUT: '540'
   _MAX_INSTANCES: '10'
 
 steps:
-  # 1. Construir la imagen usando variables (_LOCATION, _PROJECT_ID, _REPO_NAME, _IMAGE_NAME)
   - name: 'gcr.io/cloud-builders/docker'
     dir: 'onemarketer-api'
-    args: [
-      'build',
-      '-t', '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA',
-      '.'
-    ]
+    args:
+      - 'build'
+      - '-t'
+      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
+      - '.'
 
-  # 2. Subir la imagen a Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: [
-      'push',
-      '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-    ]
+    args:
+      - 'push'
+      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
 
-  # 3. Desplegar en Cloud Run con el nombre de servicio dinámico
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
       - 'run'
       - 'deploy'
-      - '${_SERVICE_NAME}' # Aquí se define si es dev-* o prd-*
-      - '--image'
-      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-      - '--region'
-      - '${_LOCATION}'
-      - '--memory'
-      - '${_MEMORY}'
-      - '--timeout'
-      - '${_TIMEOUT}'
-      - '--max-instances'
-      - '${_MAX_INSTANCES}'
+      - '${_SERVICE_NAME}'
+      - '--project=${_PROJECT_ID}'
+      - '--image=${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
+      - '--region=${_LOCATION}'
+      - '--memory=${_MEMORY}'
+      - '--timeout=${_TIMEOUT}'
+      - '--max-instances=${_MAX_INSTANCES}'
+      - '--set-secrets=ONEMARKETER_API_CREDENTIALS=${_OAUTH_SECRET}:latest'
       - '--allow-unauthenticated'
 
 options:

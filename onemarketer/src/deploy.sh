@@ -338,6 +338,9 @@ fi
 print_info "Desplegando Cloud Function..."
 print_info "Esto puede tomar varios minutos..."
 
+DEPLOY_SERVICE_ACCOUNT="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+GCP_ENV_VARS="GCP_PROJECT_ID=${PROJECT_ID},GCP_BUCKET_NAME=${BUCKET_NAME},GCP_DATASET_ID=${DATASET_ID},GCP_REGION=${REGION},GCP_FUNCTION_NAME=${FUNCTION_NAME},GCP_SCHEDULER_NAME=${SCHEDULER_NAME},GCP_SERVICE_ACCOUNT_NAME=${SERVICE_ACCOUNT_NAME},PYTHONUNBUFFERED=1"
+
 if [[ "$GEN2" == "true" ]]; then
     # Cloud Functions de segunda generación
     print_info "Usando Cloud Functions de segunda generación..."
@@ -353,7 +356,8 @@ if [[ "$GEN2" == "true" ]]; then
         --max-instances="$MAX_INSTANCES" \
         --min-instances="$MIN_INSTANCES" \
         --allow-unauthenticated \
-        --set-env-vars="PYTHONUNBUFFERED=1" \
+        --set-env-vars="$GCP_ENV_VARS" \
+        --service-account="$DEPLOY_SERVICE_ACCOUNT" \
         --cpu="2" \
         --concurrency="80"
 else

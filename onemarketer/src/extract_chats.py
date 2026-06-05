@@ -18,6 +18,27 @@ import os
 from google.cloud import storage
 from google.cloud import bigquery
 
+# Env vars inyectadas en deploy (Cloud Build → --set-env-vars). Sobrescriben config.json["gcp"].
+_GCP_ENV_VARS = {
+    "project_id": "GCP_PROJECT_ID",
+    "bucket_name": "GCP_BUCKET_NAME",
+    "dataset_id": "GCP_DATASET_ID",
+    "region": "GCP_REGION",
+    "function_name": "GCP_FUNCTION_NAME",
+    "scheduler_name": "GCP_SCHEDULER_NAME",
+    "service_account_name": "GCP_SERVICE_ACCOUNT_NAME",
+}
+
+
+def apply_gcp_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Aplica overrides de entorno sobre la sección gcp (prioridad: env > config.json)."""
+    gcp = config.setdefault("gcp", {})
+    overrides = {key: os.environ[env_name] for key, env_name in _GCP_ENV_VARS.items() if os.environ.get(env_name)}
+    if overrides:
+        gcp.update(overrides)
+        print(f"GCP config desde env: {', '.join(sorted(overrides))}")
+    return config
+
 
 def load_config(config_file: str) -> Dict[str, Any]:
     """
@@ -49,7 +70,7 @@ def load_config(config_file: str) -> Dict[str, Any]:
             sys.exit(1)
         
         print(f"Configuración cargada desde: {config_file}")
-        return config
+        return apply_gcp_env_overrides(config)
         
     except FileNotFoundError:
         print(f"Error: No se encontró el archivo de configuración: {config_file}")

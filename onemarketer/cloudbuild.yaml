@@ -1,12 +1,16 @@
 # Pipeline: Cloud Functions Gen2 (HTTP) desde onemarketer/src.
-# Trigger en GCP: archivo = onemarketer/cloudbuild.yaml, filtro opcional onemarketer/**
 #
-# Job batch invocado por POST (p. ej. Cloud Scheduler).
+# Variables de ambiente (dev/prd): créalas en el ACTIVADOR de Cloud Build
+#   Cloud Build → Activadores → [tu trigger] → Variables de sustitución
+#
+# Obligatorias en el activador:
+#   _PROJECT_ID, _FUNCTION_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME,
+#   _DATASET_ID, _SCHEDULER_NAME, _SERVICE_ACCOUNT_NAME
+# Opcional: _LOCATION (default us-central1)
+#
+# El deploy usa ${_...} en gcloud; las de runtime se pasan a la función con --set-env-vars.
 substitutions:
   _LOCATION: 'us-central1'
-  _PROJECT_ID: 'dev-utpbi-data-operation'
-  _FUNCTION_NAME: 'dev-utpbi-onemarketer-reporte-chats'
-  _SERVICE_ACCOUNT: 'dev-utpbi-data-operation@appspot.gserviceaccount.com'
   _RUNTIME: 'python310'
   _ENTRY_POINT: 'main'
   _MEMORY: '2Gi'
@@ -36,6 +40,7 @@ steps:
       - '--max-instances=${_MAX_INSTANCES}'
       - '--concurrency=${_CONCURRENCY}'
       - '--service-account=${_SERVICE_ACCOUNT}'
+      - '--set-env-vars=GCP_PROJECT_ID=${_PROJECT_ID},GCP_BUCKET_NAME=${_BUCKET_NAME},GCP_DATASET_ID=${_DATASET_ID},GCP_REGION=${_LOCATION},GCP_FUNCTION_NAME=${_FUNCTION_NAME},GCP_SCHEDULER_NAME=${_SCHEDULER_NAME},GCP_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}'
 
 options:
   logging: CLOUD_LOGGING_ONLY

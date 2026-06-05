@@ -1,5 +1,6 @@
 #!/bin/bash
 # Crea/actualiza Cloud Scheduler apuntando a la Cloud Function Gen2.
+# Usa gcp.* de config/config.json (o overrides GCP_* si están exportadas en el shell).
 # Ejecutar desde onemarketer/src con: ./scheduler-setup.sh
 set -euo pipefail
 
@@ -18,6 +19,12 @@ PROJECT_ID=$(jq -r '.gcp.project_id' "$CONFIG_FILE")
 REGION=$(jq -r '.gcp.region' "$CONFIG_FILE")
 SCHEDULER_NAME=$(jq -r '.gcp.scheduler_name' "$CONFIG_FILE")
 FUNCTION_NAME=$(jq -r '.gcp.function_name' "$CONFIG_FILE")
+
+# Overrides opcionales (mismos nombres que Cloud Build / Cloud Function)
+PROJECT_ID="${GCP_PROJECT_ID:-$PROJECT_ID}"
+REGION="${GCP_REGION:-$REGION}"
+SCHEDULER_NAME="${GCP_SCHEDULER_NAME:-$SCHEDULER_NAME}"
+FUNCTION_NAME="${GCP_FUNCTION_NAME:-$FUNCTION_NAME}"
 
 SCHEDULE="${SCHEDULE:-0 4 * * *}"
 TIMEZONE="${TIMEZONE:-America/Lima}"

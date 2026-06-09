@@ -18,6 +18,10 @@ echo "=== Validando variables del activador ==="
 require "_PROJECT_ID" "${_PROJECT_ID:-}"
 require "_FUNCTION_NAME" "${_FUNCTION_NAME:-}"
 require "_SERVICE_ACCOUNT" "${_SERVICE_ACCOUNT:-}"
+if [[ -n "${_SERVICE_ACCOUNT:-}" && "${_SERVICE_ACCOUNT}" != *"@"* ]]; then
+  echo "ERROR: _SERVICE_ACCOUNT debe ser email completo (ej. nombre@${_PROJECT_ID}.iam.gserviceaccount.com), no '${_SERVICE_ACCOUNT}'" >&2
+  missing=1
+fi
 require "_BUCKET_NAME" "${_BUCKET_NAME:-}"
 require "_DATASET_ID" "${_DATASET_ID:-}"
 require "_SCHEDULER_NAME" "${_SCHEDULER_NAME:-}"

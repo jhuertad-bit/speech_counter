@@ -42,15 +42,39 @@ AUDIO_MP3_ENV: Dict[str, str] = {
 AUDIO_MP3_REQUIRED = ("project_id", "bucket_name", "path_audios_input", "path_audios_mp3")
 
 
+def _email_from_metadata_server() -> str | None:
+    """SA real en Cloud Run/Functions (más fiable que ADC cuando devuelve 'default')."""
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            "http://metadata.google.internal/computeMetadata/v1/"
+            "instance/service-accounts/default/email",
+            headers={"Metadata-Flavor": "Google"},
+        )
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            email = resp.read().decode("utf-8").strip()
+            return email if "@" in email else None
+    except Exception:
+        return None
+
+
 def get_runtime_service_account_email() -> str:
+    meta = _email_from_metadata_server()
+    if meta:
+        return meta
+
     try:
         import google.auth
 
         credentials, _ = google.auth.default()
         email = getattr(credentials, "service_account_email", None)
-        if email:
-            return email
-        return f"{type(credentials).__name__} — revisar --service-account en deploy"
+        if email and "@" in str(email) and str(email) != "default":
+            return str(email)
+        return (
+            f"SIN_RESOLVER ({type(credentials).__name__}) — "
+            "falta --service-account en deploy; revisa _SERVICE_ACCOUNT en Cloud Build"
+        )
     except Exception as exc:
         return f"ERROR al resolver: {exc}"
 
@@ -130,7 +154,12 @@ def print_runtime_gcp_info(
     print(f"    {sa_email}")
     print(f"  Service Account en config/env ({config_sa_field}, referencia):")
     print(f"    {config_sa_display}")
-    if (
+    if "@" not in sa_email or sa_email == "default":
+        print(
+            "  ⚠️  RUNTIME NO CONFIGURADA: el deploy no tiene --service-account. "
+            "Usa la SA default del proyecto (Compute). Revisa _SERVICE_ACCOUNT en Cloud Build."
+        )
+    elif (
         config_sa_ref
         and "@" in sa_email
         and config_sa_display != sa_email

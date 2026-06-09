@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
 # Importar funciones directamente de extract_chats.py
-from extract_chats import load_config, process_table
+from extract_chats import load_config, process_table, print_runtime_gcp_info
 from download_chat_media import process_media_for_date
 
 
@@ -151,6 +151,9 @@ def main(request, context=None):
         print(f"Días hacia atrás: {days_back}")
         print(f"Fechas a procesar: {len(dates_to_process)} días")
         print(f"Rango: {dates_to_process[-1]} a {dates_to_process[0]}")
+
+        runtime_config = load_config('config/config.json')
+        print_runtime_gcp_info(runtime_config)
         print("=" * 50)
         
         # Procesar cada fecha

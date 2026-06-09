@@ -99,6 +99,31 @@ def apply_gcp_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
     return config
 
 
+def print_runtime_gcp_info(config: Dict[str, Any]) -> None:
+    """Imprime la SA real de ejecución y el destino GCP (para pedir IAM al admin)."""
+    gcp = config.get("gcp", {})
+    sa_email = "(no resuelta)"
+
+    try:
+        import google.auth
+
+        credentials, _ = google.auth.default()
+        sa_email = getattr(credentials, "service_account_email", None) or (
+            f"{type(credentials).__name__} — revisar --service-account en deploy"
+        )
+    except Exception as exc:
+        sa_email = f"ERROR al resolver: {exc}"
+
+    print("=" * 60)
+    print("IDENTIDAD GCP — pedir permisos IAM a esta Service Account:")
+    print(f"  Service Account: {sa_email}")
+    print(f"  Proyecto:        {gcp.get('project_id', '')}")
+    print(f"  Dataset BQ:      {gcp.get('dataset_id', '')}")
+    print(f"  Bucket GCS:      {gcp.get('bucket_name', '')}")
+    print(f"  Región:          {gcp.get('region', '')}")
+    print("=" * 60)
+
+
 def validate_gcp_config(config: Dict[str, Any]) -> None:
     """Falla con mensaje claro si faltan valores GCP tras aplicar env vars."""
     gcp = config.get("gcp", {})

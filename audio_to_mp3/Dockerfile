@@ -15,7 +15,7 @@ COPY src/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Código y configs (main.py busca config/ junto al módulo)
-COPY src/converter.py src/main.py ./
+COPY src/converter.py src/main.py src/gcp_runtime_log.py ./
 COPY src/config/ ./config/
 
 # Gen2 Cloud Function (Eventarc / GCS): functions-framework en modo CloudEvent

@@ -16,6 +16,13 @@ from google.cloud import bigquery
 import re
 
 from auth_onemarketer import fetch_access_key
+from gcp_runtime_log import (
+    ONEMARKETER_API_ENV,
+    ONEMARKETER_API_REQUIRED,
+    finalize_gcp_config,
+    get_runtime_service_account_email,
+    print_runtime_gcp_info,
+)
 
 
 def get_access_key() -> str:
@@ -59,8 +66,11 @@ def load_config(config_file: str) -> Dict[str, Any]:
             print("Error: No se encontraron tablas configuradas en el archivo de configuración")
             sys.exit(1)
 
-        print(f"Configuración cargada desde: {config_file}")
-        return config
+        print(f"[onemarketer-api] Config tablas/API desde {config_file}")
+        return finalize_gcp_config(
+            config, ONEMARKETER_API_ENV, ONEMARKETER_API_REQUIRED,
+            service_label="onemarketer-api",
+        )
 
     except FileNotFoundError:
         print(f"Error: No se encontró el archivo de configuración: {config_file}")
@@ -791,6 +801,12 @@ def process_date(fecha: str) -> bool:
         # Cargar configuración
         config = load_config('config/config.json')
         gcp_config = config.get('gcp', {})
+        print(
+            f"[onemarketer-api] fecha={fecha} | "
+            f"SA runtime={get_runtime_service_account_email()} | "
+            f"project={gcp_config.get('project_id', '')} | "
+            f"dataset={gcp_config.get('dataset_id', '')}"
+        )
 
         # Procesar cada tabla configurada
         tables_processed = 0
@@ -874,6 +890,10 @@ def main(request, context=None):
         print(f"Días hacia atrás: {days_back}")
         print(f"Fechas a procesar: {len(dates_to_process)} días")
         print(f"Rango: {dates_to_process[-1]} a {dates_to_process[0]}")
+
+        runtime_config = load_config('config/config.json')
+        print_runtime_gcp_info(runtime_config, service_label="onemarketer-api")
+        print(f"[onemarketer-api] OAuth/Secret: ONEMARKETER_API_CREDENTIALS (Secret Manager)")
         print("=" * 50)
 
         # Procesar cada fecha

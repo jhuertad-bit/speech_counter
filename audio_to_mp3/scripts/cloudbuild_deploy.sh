@@ -51,6 +51,6 @@ gcloud functions deploy "${_FUNCTION_NAME}" \
   --timeout="${TIMEOUT}" \
   --max-instances="${MAX_INSTANCES}" \
   --concurrency="${CONCURRENCY}" \
-  --set-env-vars="CONFIG_PATH=${CONFIG_PATH}"
+  --set-env-vars="CONFIG_PATH=${CONFIG_PATH},GCP_PROJECT_ID=${_PROJECT_ID},GCP_BUCKET_NAME=${_BUCKET_NAME},GCP_REGION=${LOCATION},GCP_FUNCTION_NAME=${_FUNCTION_NAME},GCP_SERVICE_ACCOUNT_EMAIL=${_SERVICE_ACCOUNT}"
 
 echo "Función desplegada. Trigger: gs://${_BUCKET_NAME} (object.finalized)"

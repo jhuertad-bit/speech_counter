@@ -13,9 +13,19 @@ import functions_framework
 from google.cloud import storage
 
 from converter import convert_audio_to_mp3, is_supported_audio, normalize_extension
+from gcp_runtime_log import (
+    AUDIO_MP3_ENV,
+    AUDIO_MP3_REQUIRED,
+    finalize_gcp_config,
+    get_runtime_service_account_email,
+    print_runtime_gcp_info,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+_runtime_logged = False
 
 
 def load_config() -> dict:
@@ -25,7 +35,11 @@ def load_config() -> dict:
     if not os.path.exists(config_path):
         config_path = os.path.join(os.path.dirname(__file__), "config", "config.json")
     with open(config_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+        config = json.load(f)
+    logger.info("[audio-to-mp3] Config desde %s", config_path)
+    return finalize_gcp_config(
+        config, AUDIO_MP3_ENV, AUDIO_MP3_REQUIRED, service_label="audio-to-mp3"
+    )
 
 
 def build_destination_path(
@@ -55,15 +69,35 @@ def validate_input_path(file_path: str, path_audios_input: str) -> bool:
 
 @functions_framework.cloud_event
 def audio_to_mp3_converter(cloud_event):
+    global _runtime_logged
     config = load_config()
     gcp = config["gcp"]
     audio_cfg = config.get("audio", {})
+
+    if not _runtime_logged:
+        _runtime_logged = True
+        print_runtime_gcp_info(
+            config,
+            service_label="audio-to-mp3",
+            config_sa_field="service_account_email",
+            extra_lines=[
+                f"Input prefix:  {gcp.get('path_audios_input', '')}",
+                f"Output prefix: {gcp.get('path_audios_mp3', '')}",
+            ],
+        )
+        logger.info(
+            "[audio-to-mp3] SA runtime=%s | trigger bucket event",
+            get_runtime_service_account_email(),
+        )
 
     data = cloud_event.data
     bucket_name = data["bucket"]
     file_path = data["name"]
 
-    logger.info("Processing %s from bucket %s", file_path, bucket_name)
+    logger.info(
+        "[audio-to-mp3] Processing %s | bucket=%s | SA=%s",
+        file_path, bucket_name, get_runtime_service_account_email(),
+    )
 
     if not validate_input_path(file_path, gcp["path_audios_input"]):
         logger.info("Path not in configured input prefix, skipping: %s", file_path)

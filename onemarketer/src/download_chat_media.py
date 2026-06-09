@@ -28,6 +28,7 @@ from google.cloud import bigquery, storage
 
 from bq_documentos import delete_partition, ensure_table, insert_rows, load_schema
 from extract_chats import load_config, parse_onemarketer_json_response
+from gcp_runtime_log import get_runtime_service_account_email
 
 CONTENT_TYPE_EXT = {
     "image/jpeg": ".jpg",
@@ -211,6 +212,13 @@ def process_media_for_date(
     chat_messages: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     cfg = config or load_config("config/config.json")
+    gcp_config = cfg.get("gcp", {})
+    print(
+        f"[onemarketer-media] Inicio fecha={fecha_evento} | "
+        f"SA runtime={get_runtime_service_account_email()} | "
+        f"bucket={gcp_config.get('bucket_name', '')} | "
+        f"dataset={gcp_config.get('dataset_id', '')}"
+    )
     media_cfg = cfg.get("descargaChatsMedia", {})
     if not media_cfg.get("enabled", False):
         print("descargaChatsMedia deshabilitado.")

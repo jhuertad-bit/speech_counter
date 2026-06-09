@@ -153,7 +153,7 @@ def main(request, context=None):
         print(f"Rango: {dates_to_process[-1]} a {dates_to_process[0]}")
 
         runtime_config = load_config('config/config.json')
-        print_runtime_gcp_info(runtime_config)
+        print_runtime_gcp_info(runtime_config, service_label="onemarketer-etl")
         print("=" * 50)
         
         # Procesar cada fecha

@@ -18,19 +18,13 @@ import os
 from google.cloud import storage
 from google.cloud import bigquery
 
-# Env vars inyectadas en deploy (Cloud Build → --set-env-vars). Sobrescriben config.json["gcp"].
-_GCP_ENV_VARS = {
-    "project_id": "GCP_PROJECT_ID",
-    "bucket_name": "GCP_BUCKET_NAME",
-    "dataset_id": "GCP_DATASET_ID",
-    "region": "GCP_REGION",
-    "function_name": "GCP_FUNCTION_NAME",
-    "scheduler_name": "GCP_SCHEDULER_NAME",
-    "service_account_name": "GCP_SERVICE_ACCOUNT_NAME",
-}
-
-# Campos obligatorios para ETL (GCS + BigQuery). El resto es para deploy/scheduler.
-_GCP_REQUIRED_RUNTIME = ("project_id", "bucket_name", "dataset_id", "region")
+from gcp_runtime_log import (
+    ONEMARKETER_ETL_ENV,
+    ONEMARKETER_ETL_REQUIRED,
+    finalize_gcp_config,
+    get_runtime_service_account_email,
+    print_runtime_gcp_info,
+)
 
 
 # Cambiar al redeployar para confirmar en logs que corrió la revisión nueva.
@@ -85,69 +79,6 @@ def parse_onemarketer_json_response(response_text: str) -> Any:
     )
 
 
-def apply_gcp_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
-    """Aplica overrides de entorno sobre la sección gcp (prioridad: env > config.json)."""
-    gcp = config.setdefault("gcp", {})
-    overrides = {
-        key: os.environ[env_name].strip()
-        for key, env_name in _GCP_ENV_VARS.items()
-        if os.environ.get(env_name, "").strip()
-    }
-    if overrides:
-        gcp.update(overrides)
-        print(f"GCP config desde env: {', '.join(sorted(overrides))}")
-    return config
-
-
-def print_runtime_gcp_info(config: Dict[str, Any]) -> None:
-    """Imprime la SA real de ejecución y el destino GCP (para pedir IAM al admin)."""
-    gcp = config.get("gcp", {})
-    sa_email = "(no resuelta)"
-
-    try:
-        import google.auth
-
-        credentials, _ = google.auth.default()
-        sa_email = getattr(credentials, "service_account_email", None) or (
-            f"{type(credentials).__name__} — revisar --service-account en deploy"
-        )
-    except Exception as exc:
-        sa_email = f"ERROR al resolver: {exc}"
-
-    print("=" * 60)
-    print("IDENTIDAD GCP — pedir permisos IAM a esta Service Account:")
-    print(f"  Service Account: {sa_email}")
-    print(f"  Proyecto:        {gcp.get('project_id', '')}")
-    print(f"  Dataset BQ:      {gcp.get('dataset_id', '')}")
-    print(f"  Bucket GCS:      {gcp.get('bucket_name', '')}")
-    print(f"  Región:          {gcp.get('region', '')}")
-    print("=" * 60)
-
-
-def validate_gcp_config(config: Dict[str, Any]) -> None:
-    """Falla con mensaje claro si faltan valores GCP tras aplicar env vars."""
-    gcp = config.get("gcp", {})
-    missing = [
-        key for key in _GCP_REQUIRED_RUNTIME
-        if not str(gcp.get(key, "")).strip()
-    ]
-    if not missing:
-        return
-
-    env_hints = [
-        f"{_GCP_ENV_VARS[key]} → gcp.{key}"
-        for key in missing
-        if key in _GCP_ENV_VARS
-    ]
-    raise ValueError(
-        "Configuración GCP incompleta. Faltan: "
-        + ", ".join(missing)
-        + ". En Cloud Build/deploy define: "
-        + ", ".join(env_hints)
-        + ". (config.json deja gcp vacío; cada ambiente inyecta sus GCP_*)."
-    )
-
-
 def load_config(config_file: str) -> Dict[str, Any]:
     """
     Carga la configuración desde un archivo JSON
@@ -177,10 +108,14 @@ def load_config(config_file: str) -> Dict[str, Any]:
             print("Error: No se encontraron tablas configuradas en el archivo de configuración")
             sys.exit(1)
         
-        print(f"Configuración cargada desde: {config_file}")
-        config = apply_gcp_env_overrides(config)
-        validate_gcp_config(config)
-        return config
+        print(
+            f"[onemarketer-etl] Config tablas/API desde {config_file} "
+            "(URLs, keys, reporteChats, descargaChatsMedia)"
+        )
+        return finalize_gcp_config(
+            config, ONEMARKETER_ETL_ENV, ONEMARKETER_ETL_REQUIRED,
+            service_label="onemarketer-etl",
+        )
         
     except FileNotFoundError:
         print(f"Error: No se encontró el archivo de configuración: {config_file}")
@@ -852,9 +787,14 @@ def process_table(table_name: str, table_config: Dict[str, Any], gcp_config: Dic
         return []
     
     print(f"\n=== Procesando tabla: {table_name} ===")
-    
+
     # Obtener configuración de la tabla
     api_config = table_config.get('api', {})
+    print(
+        f"[onemarketer-etl] tabla={table_name} | "
+        f"SA runtime={get_runtime_service_account_email()} | "
+        f"fechaini={api_config.get('fechaini', '')}"
+    )
     processing_config = table_config.get('processing', {})
     storage_config = table_config.get('storage', {})
     bigquery_config = table_config.get('bigquery', {})

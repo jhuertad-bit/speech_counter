@@ -30,6 +30,10 @@ _GCP_ENV_VARS = {
 }
 
 
+# Cambiar al redeployar para confirmar en logs que corrió la revisión nueva.
+PARSER_VERSION = "onemarketer-json-v2"
+
+
 def parse_onemarketer_json_response(response_text: str) -> Any:
     """
     Parsea JSON de APIs OneMarketer.
@@ -41,6 +45,12 @@ def parse_onemarketer_json_response(response_text: str) -> Any:
     if not text:
         raise ValueError("La respuesta de la API está vacía")
 
+    if text.startswith("<") or text.startswith("<br"):
+        print(
+            f"⚠️  [{PARSER_VERSION}] Respuesta con avisos PHP/HTML "
+            f"({len(text)} bytes totales)"
+        )
+
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -50,18 +60,25 @@ def parse_onemarketer_json_response(response_text: str) -> Any:
         idx = text.find(marker)
         if idx >= 0:
             try:
-                if idx > 0:
-                    print(
-                        f"⚠️  Respuesta con contenido no-JSON al inicio "
-                        f"({idx} bytes); extrayendo JSON desde marker {marker!r}"
-                    )
+                print(
+                    f"⚠️  [{PARSER_VERSION}] Extrayendo JSON desde byte {idx} "
+                    f"(marker {marker!r})"
+                )
                 return json.loads(text[idx:])
-            except json.JSONDecodeError:
+            except json.JSONDecodeError as exc:
+                print(f"⚠️  [{PARSER_VERSION}] JSON incompleto en marker {marker!r}: {exc}")
                 continue
 
+    if "Undefined index: template" in text and '{"status"' not in text:
+        raise ValueError(
+            f"[{PARSER_VERSION}] Respuesta truncada: solo avisos PHP "
+            f"({len(text)} bytes). La API mezcla ~6.5 MB de notices antes del JSON; "
+            "se requiere descargar la respuesta completa (~27 MB)."
+        )
+
     raise ValueError(
-        "No se pudo decodificar JSON de la respuesta. "
-        f"Inicio: {text[:200]}"
+        f"[{PARSER_VERSION}] No se pudo decodificar JSON. "
+        f"Tamaño respuesta: {len(text)} bytes. Inicio: {text[:200]}"
     )
 
 
@@ -557,13 +574,13 @@ def extract_chats(fecha_inicio: str, key: str, config: Dict[str, Any]) -> List[D
                 print(f"Reintento {attempt + 1}/{max_retries} después de {retry_delay} segundos...")
                 time.sleep(retry_delay)
             
-            print(f"Realizando consulta a la API...")
+            print(f"Realizando consulta a la API... [{PARSER_VERSION}]")
             print(f"URL: {base_url}")
             print(f"Parámetros: {params}")
             print(f"Timeout configurado: {timeout} segundos")
             
-            # Realizar la petición GET
-            response = requests.get(base_url, params=params, timeout=timeout)
+            # stream=False: descarga completa (el JSON viene al final tras ~6 MB de avisos PHP)
+            response = requests.get(base_url, params=params, timeout=timeout, stream=False)
             response.raise_for_status()
             
             # Si llegamos aquí, la petición fue exitosa

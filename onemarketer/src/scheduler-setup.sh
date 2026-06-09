@@ -30,6 +30,13 @@ SERVICE_ACCOUNT_NAME=$(jq -r '.gcp.service_account_name' "$CONFIG_FILE")
 SERVICE_ACCOUNT_NAME="${GCP_SERVICE_ACCOUNT_NAME:-$SERVICE_ACCOUNT_NAME}"
 INVOKER_SA="${SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
+for var_name in PROJECT_ID REGION FUNCTION_NAME SCHEDULER_NAME SERVICE_ACCOUNT_NAME; do
+  if [[ -z "${!var_name}" || "${!var_name}" == "null" ]]; then
+    echo "ERROR: falta ${var_name}. Exporta las variables GCP_* o complétalas en config.json."
+    exit 1
+  fi
+done
+
 SCHEDULE="${SCHEDULE:-0 4 * * *}"
 TIMEZONE="${TIMEZONE:-America/Lima}"
 PAYLOAD="${PAYLOAD:-{\"current_date\": \"TODAY\", \"days_back\": 3}}"

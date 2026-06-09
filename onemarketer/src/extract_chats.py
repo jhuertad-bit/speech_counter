@@ -29,6 +29,9 @@ _GCP_ENV_VARS = {
     "service_account_name": "GCP_SERVICE_ACCOUNT_NAME",
 }
 
+# Campos obligatorios para ETL (GCS + BigQuery). El resto es para deploy/scheduler.
+_GCP_REQUIRED_RUNTIME = ("project_id", "bucket_name", "dataset_id", "region")
+
 
 # Cambiar al redeployar para confirmar en logs que corrió la revisión nueva.
 PARSER_VERSION = "onemarketer-json-v2"
@@ -85,11 +88,39 @@ def parse_onemarketer_json_response(response_text: str) -> Any:
 def apply_gcp_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
     """Aplica overrides de entorno sobre la sección gcp (prioridad: env > config.json)."""
     gcp = config.setdefault("gcp", {})
-    overrides = {key: os.environ[env_name] for key, env_name in _GCP_ENV_VARS.items() if os.environ.get(env_name)}
+    overrides = {
+        key: os.environ[env_name].strip()
+        for key, env_name in _GCP_ENV_VARS.items()
+        if os.environ.get(env_name, "").strip()
+    }
     if overrides:
         gcp.update(overrides)
         print(f"GCP config desde env: {', '.join(sorted(overrides))}")
     return config
+
+
+def validate_gcp_config(config: Dict[str, Any]) -> None:
+    """Falla con mensaje claro si faltan valores GCP tras aplicar env vars."""
+    gcp = config.get("gcp", {})
+    missing = [
+        key for key in _GCP_REQUIRED_RUNTIME
+        if not str(gcp.get(key, "")).strip()
+    ]
+    if not missing:
+        return
+
+    env_hints = [
+        f"{_GCP_ENV_VARS[key]} → gcp.{key}"
+        for key in missing
+        if key in _GCP_ENV_VARS
+    ]
+    raise ValueError(
+        "Configuración GCP incompleta. Faltan: "
+        + ", ".join(missing)
+        + ". En Cloud Build/deploy define: "
+        + ", ".join(env_hints)
+        + ". (config.json deja gcp vacío; cada ambiente inyecta sus GCP_*)."
+    )
 
 
 def load_config(config_file: str) -> Dict[str, Any]:
@@ -122,7 +153,9 @@ def load_config(config_file: str) -> Dict[str, Any]:
             sys.exit(1)
         
         print(f"Configuración cargada desde: {config_file}")
-        return apply_gcp_env_overrides(config)
+        config = apply_gcp_env_overrides(config)
+        validate_gcp_config(config)
+        return config
         
     except FileNotFoundError:
         print(f"Error: No se encontró el archivo de configuración: {config_file}")

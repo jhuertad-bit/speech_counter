@@ -1,12 +1,12 @@
 {
   "gcp":{
-     "project_id":"dev-utpbi-data-operation",
-     "bucket_name":"dev-utp-stg-onemarketer-k7m4n9p2q8r5t3v6w1x0",
-     "dataset_id":"raw_onemarketer",
+     "project_id":"",
+     "bucket_name":"",
+     "dataset_id":"",
      "region":"us-central1",
-     "function_name":"dev-utpbi-onemarketer-reporte-chats",
-     "scheduler_name":"dev-sch-onemarketer-reporte-chats",
-     "service_account_name":"dev-utpbi-onemarketer-process"
+     "function_name":"",
+     "scheduler_name":"",
+     "service_account_name":""
   },
   "reporteChats":{
      "enabled":true,

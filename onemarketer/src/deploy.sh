@@ -36,10 +36,25 @@ load_config() {
     SERVICE_ACCOUNT_NAME=$(jq -r '.gcp.service_account_name' "$config_file")
     DATASET_ID=$(jq -r '.gcp.dataset_id' "$config_file")
     BUCKET_NAME=$(jq -r '.gcp.bucket_name' "$config_file")
-    
+
+    # Overrides: prioridad env > config.json (mismo criterio que extract_chats.py)
+    PROJECT_ID="${GCP_PROJECT_ID:-$PROJECT_ID}"
+    REGION="${GCP_REGION:-$REGION}"
+    FUNCTION_NAME="${GCP_FUNCTION_NAME:-$FUNCTION_NAME}"
+    SCHEDULER_NAME="${GCP_SCHEDULER_NAME:-$SCHEDULER_NAME}"
+    SERVICE_ACCOUNT_NAME="${GCP_SERVICE_ACCOUNT_NAME:-$SERVICE_ACCOUNT_NAME}"
+    DATASET_ID="${GCP_DATASET_ID:-$DATASET_ID}"
+    BUCKET_NAME="${GCP_BUCKET_NAME:-$BUCKET_NAME}"
+
     # Validar que todos los valores requeridos estén presentes
-    if [[ "$PROJECT_ID" == "null" || "$REGION" == "null" || "$FUNCTION_NAME" == "null" || "$SCHEDULER_NAME" == "null" || "$SERVICE_ACCOUNT_NAME" == "null" || "$DATASET_ID" == "null" || "$BUCKET_NAME" == "null" ]]; then
-        print_error "Faltan valores requeridos en el archivo de configuración"
+    if [[ -z "$PROJECT_ID" || "$PROJECT_ID" == "null" \
+       || -z "$REGION" || "$REGION" == "null" \
+       || -z "$FUNCTION_NAME" || "$FUNCTION_NAME" == "null" \
+       || -z "$SCHEDULER_NAME" || "$SCHEDULER_NAME" == "null" \
+       || -z "$SERVICE_ACCOUNT_NAME" || "$SERVICE_ACCOUNT_NAME" == "null" \
+       || -z "$DATASET_ID" || "$DATASET_ID" == "null" \
+       || -z "$BUCKET_NAME" || "$BUCKET_NAME" == "null" ]]; then
+        print_error "Faltan valores GCP. Exporta GCP_PROJECT_ID, GCP_BUCKET_NAME, GCP_DATASET_ID, GCP_REGION, GCP_FUNCTION_NAME, GCP_SCHEDULER_NAME y GCP_SERVICE_ACCOUNT_NAME (config.json deja gcp vacío por ambiente)."
         exit 1
     fi
     

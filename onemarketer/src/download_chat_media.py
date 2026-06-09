@@ -27,7 +27,7 @@ import requests
 from google.cloud import bigquery, storage
 
 from bq_documentos import delete_partition, ensure_table, insert_rows, load_schema
-from extract_chats import load_config
+from extract_chats import load_config, parse_onemarketer_json_response
 
 CONTENT_TYPE_EXT = {
     "image/jpeg": ".jpg",
@@ -125,7 +125,8 @@ def get_download_api(api_cfg: dict[str, Any], fechaini: str) -> dict[str, Any]:
             print(f"API descargachats: context={context}, fechaini={fechaini}")
             response = requests.get(base_url, headers=headers, params=params, timeout=timeout)
             response.raise_for_status()
-            data = response.json()
+            response.encoding = "utf-8"
+            data = parse_onemarketer_json_response(response.text)
             print(f"descargachats status: {data.get('status')}")
             return data
         except requests.RequestException as exc:

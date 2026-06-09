@@ -30,6 +30,41 @@ _GCP_ENV_VARS = {
 }
 
 
+def parse_onemarketer_json_response(response_text: str) -> Any:
+    """
+    Parsea JSON de APIs OneMarketer.
+
+    Algunas respuestas vienen con avisos PHP/HTML antes del JSON válido
+    (p. ej. 'Undefined index: template' en getChats.php), lo que rompe response.json().
+    """
+    text = response_text.strip()
+    if not text:
+        raise ValueError("La respuesta de la API está vacía")
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    for marker in ('{"status"', '{"data"'):
+        idx = text.find(marker)
+        if idx >= 0:
+            try:
+                if idx > 0:
+                    print(
+                        f"⚠️  Respuesta con contenido no-JSON al inicio "
+                        f"({idx} bytes); extrayendo JSON desde marker {marker!r}"
+                    )
+                return json.loads(text[idx:])
+            except json.JSONDecodeError:
+                continue
+
+    raise ValueError(
+        "No se pudo decodificar JSON de la respuesta. "
+        f"Inicio: {text[:200]}"
+    )
+
+
 def apply_gcp_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
     """Aplica overrides de entorno sobre la sección gcp (prioridad: env > config.json)."""
     gcp = config.setdefault("gcp", {})
@@ -564,16 +599,16 @@ def extract_chats(fecha_inicio: str, key: str, config: Dict[str, Any]) -> List[D
             print(f"Response headers: {dict(response.headers)}")
             raise ValueError(error_msg)
         
-        # Intentar parsear JSON con mejor manejo de errores
+        # Parsear JSON (tolerante a avisos PHP/HTML que OneMarketer antepone al JSON)
         try:
-            data = response.json()
-        except json.JSONDecodeError as json_err:
+            data = parse_onemarketer_json_response(response_text)
+        except ValueError as json_err:
             error_msg = f"Error al decodificar JSON de la respuesta. Status code: {response.status_code}"
             print(f"❌ {error_msg}")
             print(f"Response text (primeros 500 caracteres): {response_text[:500]}")
             print(f"Response headers: {dict(response.headers)}")
             print(f"Error de JSON: {json_err}")
-            raise ValueError(f"{error_msg}. Respuesta recibida: {response_text[:200]}...")
+            raise ValueError(f"{error_msg}. Respuesta recibida: {response_text[:200]}...") from json_err
         
         # Extraer los mensajes del campo 'data'
         if 'data' in data and isinstance(data['data'], list):

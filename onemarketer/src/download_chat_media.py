@@ -309,6 +309,7 @@ def process_media_for_date(
             "media_type": media_type,
             "content_source": "download_api",
             "source_url": download_url,
+            "source_file_name": None,
             "gcs_uri": None,
             "file_name": None,
             "file_size_bytes": None,
@@ -324,7 +325,10 @@ def process_media_for_date(
                 final_path, file_size = download_to_path(download_url, temp_path, timeout)
                 _, ext = os.path.splitext(final_path)
                 object_name = _object_name(name_template, chat_line, media_type, ext)
-                file_name = os.path.basename(final_path)
+                # Nombre que devolvió el servidor HTTP (Content-Disposition / MIME)
+                source_file_name = os.path.basename(final_path)
+                # file_name = nombre en GCS (debe calzar con el final de gcs_uri)
+                storage_file_name = object_name
 
                 gcs_uri = None
                 if upload_gcs:
@@ -336,13 +340,14 @@ def process_media_for_date(
                     local_dir = storage_cfg.get("local_dir", "descarga")
                     folder = os.path.join(local_dir, str(idmessage))
                     os.makedirs(folder, exist_ok=True)
-                    dest = os.path.join(folder, file_name)
+                    dest = os.path.join(folder, storage_file_name)
                     with open(final_path, "rb") as src, open(dest, "wb") as dst:
                         dst.write(src.read())
                     print(f"    → local {dest}")
 
+                base_row["source_file_name"] = source_file_name
                 base_row["gcs_uri"] = gcs_uri
-                base_row["file_name"] = file_name
+                base_row["file_name"] = storage_file_name
                 base_row["file_size_bytes"] = file_size
                 base_row["download_status"] = "OK"
                 downloaded += 1

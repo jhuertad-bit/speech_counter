@@ -8,6 +8,7 @@
   {"name": "media_type", "type": "STRING", "mode": "NULLABLE"},
   {"name": "content_source", "type": "STRING", "mode": "NULLABLE"},
   {"name": "source_url", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "source_file_name", "type": "STRING", "mode": "NULLABLE"},
   {"name": "gcs_uri", "type": "STRING", "mode": "NULLABLE"},
   {"name": "file_name", "type": "STRING", "mode": "NULLABLE"},
   {"name": "file_size_bytes", "type": "INTEGER", "mode": "NULLABLE"},

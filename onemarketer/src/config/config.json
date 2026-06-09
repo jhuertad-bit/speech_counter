@@ -25,7 +25,7 @@
      },
      "storage":{
         "upload_gcs":true,
-        "gcs_path":"utp_pregrado_endpoint/reportechats/services/getChats"
+        "gcs_path":"utp_pregrado_endpoint/reporteChats/services/getChats"
      },
      "bigquery":{
         "create_bigquery":true,

@@ -1,17 +1,19 @@
 FROM python:3.10-slim
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Instalar dependencias
 COPY src/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar todo el código
-COPY . .
+COPY src/ ./src/
 
 WORKDIR /app/src
 
+ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
 
-# Imagen opcional para pruebas locales con functions-framework (no usada en cloudbuild).
 CMD ["sh", "-c", "exec functions-framework --target=main --port=${PORT:-8080}"]

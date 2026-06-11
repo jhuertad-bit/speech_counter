@@ -7,8 +7,8 @@ Flujo:
   1. getChats (reporteChats) ya cargó las líneas en reporte_chats.
   2. Se detectan líneas que son archivo (mime / sin texto).
   3. API descargachats aporta la URL en ``download`` por idcase+idmessage.
-  4. Se descarga, sube a GCS (whatsapp_documentos_raw) y registra en
-     reporte_whatsapp_documento_raw.
+  4. Se descarga, sube a GCS y registra en reporte_whatsapp_documento_raw.
+  5. Si es audio, convierte a MP3 (audio_to_mp3) y registra en reporte_whatsapp_mp3.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from google.cloud import bigquery, storage
 from bq_documentos import delete_partition, ensure_table, insert_rows, load_schema
 from extract_chats import load_config, parse_onemarketer_json_response
 from gcp_runtime_log import get_runtime_service_account_email
+from whatsapp_audio_mp3 import convert_whatsapp_audio_row
 
 CONTENT_TYPE_EXT = {
     "image/jpeg": ".jpg",
@@ -229,6 +230,7 @@ def process_media_for_date(
     storage_cfg = media_cfg.get("storage", {})
     processing_cfg = media_cfg.get("processing", {})
     bq_cfg = media_cfg.get("bigquery", {})
+    mp3_cfg = media_cfg.get("audioToMp3", {})
     gcp_config = cfg.get("gcp", {})
 
     fechaini = api_cfg.get("fechaini") or fecha_evento
@@ -278,9 +280,13 @@ def process_media_for_date(
         keys_to_process = list(download_index.keys())
 
     bq_rows: list[dict[str, Any]] = []
+    mp3_rows: list[dict[str, Any]] = []
     downloaded = 0
     failed = 0
+    mp3_converted = 0
+    mp3_failed = 0
     skipped_no_match = 0
+    mp3_enabled = mp3_cfg.get("enabled", False) and upload_gcs
 
     for key in keys_to_process:
         if downloaded >= max_files:
@@ -351,6 +357,26 @@ def process_media_for_date(
                 base_row["file_size_bytes"] = file_size
                 base_row["download_status"] = "OK"
                 downloaded += 1
+
+                if mp3_enabled and media_type == "audio":
+                    mp3_row = convert_whatsapp_audio_row(
+                        local_source_path=final_path,
+                        storage_file_name=storage_file_name,
+                        source_file_name=source_file_name,
+                        source_gcs_uri=gcs_uri,
+                        gcp_config=gcp_config,
+                        mp3_cfg=mp3_cfg,
+                        fecha_evento=fecha_evento,
+                        chat_line=chat_line,
+                        mime=mime,
+                        now=now,
+                        tmp_dir=tmp,
+                    )
+                    mp3_rows.append(mp3_row)
+                    if mp3_row.get("conversion_status") == "OK":
+                        mp3_converted += 1
+                    elif mp3_row.get("conversion_status") == "FAILED":
+                        mp3_failed += 1
         except requests.RequestException as exc:
             base_row["download_status"] = "FAILED"
             base_row["error_message"] = str(exc)[:500]
@@ -372,6 +398,22 @@ def process_media_for_date(
         insert_rows(bq_client, dataset_id, table_id, bq_rows)
         print(f"BigQuery: {len(bq_rows)} filas en {table_ref}")
 
+    mp3_bq_cfg = mp3_cfg.get("bigquery", {})
+    if mp3_enabled and mp3_bq_cfg.get("enabled", True) and mp3_rows:
+        project_id = gcp_config["project_id"]
+        dataset_id = gcp_config["dataset_id"]
+        mp3_table_id = mp3_bq_cfg.get("table_id", "reporte_whatsapp_mp3")
+        mp3_partition_field = mp3_bq_cfg.get("partition_field", "fecha_evento")
+
+        bq_client = bigquery.Client(project=project_id)
+        mp3_schema = load_schema(mp3_table_id)
+        mp3_table_ref = ensure_table(
+            bq_client, project_id, dataset_id, mp3_table_id, mp3_schema, mp3_partition_field
+        )
+        delete_partition(bq_client, mp3_table_ref, fecha_evento, mp3_partition_field)
+        insert_rows(bq_client, dataset_id, mp3_table_id, mp3_rows)
+        print(f"BigQuery MP3: {len(mp3_rows)} filas en {mp3_table_ref}")
+
     summary = {
         "fecha_evento": fecha_evento,
         "media_chat_lines": len(media_lines),
@@ -379,6 +421,9 @@ def process_media_for_date(
         "matched_and_processed": len(keys_to_process),
         "downloaded": downloaded,
         "failed": failed,
+        "mp3_rows": len(mp3_rows),
+        "mp3_converted": mp3_converted,
+        "mp3_failed": mp3_failed,
         "bq_rows": len(bq_rows),
     }
     print(f"\nResumen medios: {summary}")

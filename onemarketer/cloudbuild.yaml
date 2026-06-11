@@ -1,13 +1,14 @@
-# Pipeline: Cloud Functions Gen2 (HTTP) desde onemarketer/src.
+# Pipeline: Cloud Functions Gen2 (HTTP) con imagen Docker (ffmpeg para audio→MP3).
 #
-# Variables de ambiente (dev/prd): ACTIVADOR de Cloud Build → Variables de sustitución
+# Variables de ambiente (dev/prd): ACTIVADOR → Variables de sustitución
 #   Obligatorias: _PROJECT_ID, _FUNCTION_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME,
 #                 _DATASET_ID, _SCHEDULER_NAME, _SERVICE_ACCOUNT_NAME
-#   Opcionales:   _LOCATION, _RUNTIME, _MEMORY, _TIMEOUT, _CPU, _MAX_INSTANCES, _CONCURRENCY
-#                 _ALLOW_UNAUTHENTICATED (default false; true requiere run.services.setIamPolicy)
+#   Opcionales:   _LOCATION, _REPO_NAME, _IMAGE_NAME, _MEMORY, _TIMEOUT, _CPU,
+#                 _MAX_INSTANCES, _CONCURRENCY, _ALLOW_UNAUTHENTICATED
 substitutions:
   _LOCATION: 'us-central1'
-  _RUNTIME: 'python310'
+  _REPO_NAME: 'gcf-artifacts'
+  _IMAGE_NAME: 'onemarketer-etl'
   _ENTRY_POINT: 'main'
   _MEMORY: '2Gi'
   _TIMEOUT: '3600s'
@@ -17,11 +18,25 @@ substitutions:
   _ALLOW_UNAUTHENTICATED: 'false'
 
 steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    dir: 'onemarketer'
+    args:
+      - 'build'
+      - '-t'
+      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
+      - '.'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
+
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: bash
     args:
       - 'onemarketer/scripts/cloudbuild_deploy.sh'
     env:
+      - 'COMMIT_SHA=$COMMIT_SHA'
       - '_PROJECT_ID=${_PROJECT_ID}'
       - '_FUNCTION_NAME=${_FUNCTION_NAME}'
       - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
@@ -30,7 +45,8 @@ steps:
       - '_SCHEDULER_NAME=${_SCHEDULER_NAME}'
       - '_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}'
       - '_LOCATION=${_LOCATION}'
-      - '_RUNTIME=${_RUNTIME}'
+      - '_REPO_NAME=${_REPO_NAME}'
+      - '_IMAGE_NAME=${_IMAGE_NAME}'
       - '_ENTRY_POINT=${_ENTRY_POINT}'
       - '_MEMORY=${_MEMORY}'
       - '_TIMEOUT=${_TIMEOUT}'

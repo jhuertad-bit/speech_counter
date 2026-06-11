@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy Cloud Function Gen2 desde Cloud Build (variables ${_...} sustituidas por el activador).
+# Deploy Cloud Function Gen2 desde imagen Docker (ffmpeg + ETL OneMarketer).
 set -euo pipefail
 
 missing=0
@@ -32,7 +32,9 @@ if [[ "${missing}" -ne 0 ]]; then
 fi
 
 LOCATION="${_LOCATION:-us-central1}"
-RUNTIME="${_RUNTIME:-python310}"
+REPO_NAME="${_REPO_NAME:-gcf-artifacts}"
+IMAGE_NAME="${_IMAGE_NAME:-onemarketer-etl}"
+COMMIT_SHA="${COMMIT_SHA:-latest}"
 ENTRY_POINT="${_ENTRY_POINT:-main}"
 MEMORY="${_MEMORY:-2Gi}"
 TIMEOUT="${_TIMEOUT:-3600s}"
@@ -41,6 +43,7 @@ MAX_INSTANCES="${_MAX_INSTANCES:-3}"
 CONCURRENCY="${_CONCURRENCY:-1}"
 ALLOW_UNAUTH="${_ALLOW_UNAUTHENTICATED:-false}"
 
+IMAGE="${LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${COMMIT_SHA}"
 ENV_VARS="GCP_PROJECT_ID=${_PROJECT_ID},GCP_BUCKET_NAME=${_BUCKET_NAME},GCP_DATASET_ID=${_DATASET_ID},GCP_REGION=${LOCATION},GCP_FUNCTION_NAME=${_FUNCTION_NAME},GCP_SCHEDULER_NAME=${_SCHEDULER_NAME},GCP_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}"
 
 DEPLOY_ARGS=(
@@ -48,8 +51,7 @@ DEPLOY_ARGS=(
   --gen2
   --project="${_PROJECT_ID}"
   --region="${LOCATION}"
-  --runtime="${RUNTIME}"
-  --source=onemarketer/src
+  --image="${IMAGE}"
   --entry-point="${ENTRY_POINT}"
   --trigger-http
   --memory="${MEMORY}"
@@ -62,11 +64,11 @@ DEPLOY_ARGS=(
 )
 
 if [[ "${ALLOW_UNAUTH}" == "true" ]]; then
-  echo "Modo público: --allow-unauthenticated (requiere run.services.setIamPolicy en la SA de Cloud Build)"
+  echo "Modo público: --allow-unauthenticated"
   DEPLOY_ARGS+=(--allow-unauthenticated)
 else
-  echo "Modo autenticado: sin --allow-unauthenticated (Scheduler debe usar OIDC; ver scheduler-setup.sh)"
+  echo "Modo autenticado: Scheduler con OIDC (ver scheduler-setup.sh)"
 fi
 
-echo "=== gcloud functions deploy ${_FUNCTION_NAME} ==="
+echo "=== gcloud functions deploy ${_FUNCTION_NAME} (imagen: ${IMAGE}) ==="
 gcloud "${DEPLOY_ARGS[@]}"

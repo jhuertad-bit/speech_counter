@@ -79,6 +79,25 @@
         "enabled":true,
         "table_id":"reporte_whatsapp_documento_raw",
         "partition_field":"fecha_evento"
+     },
+     "audioToMp3":{
+        "enabled":true,
+        "gcs_path":"utp_pregrado_endpoint/reporteChats/services/getChats_mp3",
+        "audio":{
+           "supported_extensions":[
+              ".ogg",".opus",".wav",".wave",".flac",".m4a",".aac",
+              ".wma",".amr",".3gp",".mp4",".webm",".aiff",".aif",".caf",".mp2",".mp3"
+           ],
+           "default_bitrate":"128k",
+           "skip_existing_mp3":true,
+           "min_duration_seconds":0.1,
+           "ffmpeg_timeout_seconds":300
+        },
+        "bigquery":{
+           "enabled":true,
+           "table_id":"reporte_whatsapp_mp3",
+           "partition_field":"fecha_evento"
+        }
      }
   }
 }

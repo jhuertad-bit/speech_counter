@@ -1,0 +1,30 @@
+-- =============================================================================
+-- Parámetros OneMarketer WhatsApp Gen IA (ajustar por ambiente antes de desplegar)
+-- =============================================================================
+--
+-- DEV (ejemplo):
+--   PROJECT_ID          = dev-utpbi-data-operation
+--   DATASET_RAW         = raw_onemarketer
+--   DATASET_ANALYTICS   = adf_speech_analytics   -- o dataset dedicado en dev
+--   BQ_CONNECTION         = `dev-utpbi-data-operation.US.utp_gen_ia_process`
+--   GEMINI_MODEL        = `dev-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`
+--   EXTERNAL_TABLE_TMP  = `dev-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`
+--
+-- PRD (ejemplo, alinear con Genesys):
+--   PROJECT_ID          = prd-utpbi-data-operation
+--   DATASET_RAW         = raw_onemarketer
+--   DATASET_ANALYTICS   = adf_speech_analytics
+--   BQ_CONNECTION         = `prd-utpbi-data-operation.US.utp_gen_ia_process`
+--   GEMINI_MODEL        = `prd-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`
+--   EXTERNAL_TABLE_TMP  = `prd-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`
+--
+-- Fuente MP3 (ETL onemarketer):
+--   raw_onemarketer.reporte_whatsapp_mp3  →  gcs_uri bajo getChats/mp3/{fecha}/media/
+--
+-- Orquestación sugerida:
+--   Cloud Scheduler / ADF → CALL analytics.sp_onemarketer_whatsapp_gen_ia(DATE);
+--   Ejecutar DESPUÉS del job onemarketer-etl del mismo día.
+--
+-- IAM:
+--   SA del job BQ: cloudvision no aplica; necesita AI/Gemini + lectura GCS vía CONNECTION
+--   La conexión utp_gen_ia_process debe incluir el bucket onemarketer.

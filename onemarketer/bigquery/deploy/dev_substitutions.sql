@@ -1,0 +1,19 @@
+-- Sustituye placeholders antes de ejecutar DDL/SP en DEV.
+-- Ejemplo con sed (desde la raíz onemarketer/bigquery):
+--
+--   export PROJECT_ID=dev-utpbi-data-operation
+--   export DATASET_RAW=raw_onemarketer
+--   export DATASET_ANALYTICS=adf_speech_analytics
+--   export BQ_CONNECTION='`dev-utpbi-data-operation.US.utp_gen_ia_process`'
+--   export GEMINI_MODEL='`dev-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`'  # sin comillas extra en el SQL final
+--   export EXTERNAL_TABLE_TMP='`dev-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`'
+--
+--   for f in tables/*.sql views/*.sql procedures/*.sql; do
+--     sed -e "s|\${PROJECT_ID}|${PROJECT_ID}|g" \
+--         -e "s|\${DATASET_RAW}|${DATASET_RAW}|g" \
+--         -e "s|\${DATASET_ANALYTICS}|${DATASET_ANALYTICS}|g" \
+--         -e "s|\${BQ_CONNECTION}|${BQ_CONNECTION}|g" \
+--         -e "s|\${GEMINI_MODEL}|${GEMINI_MODEL}|g" \
+--         -e "s|\${EXTERNAL_TABLE_TMP}|${EXTERNAL_TABLE_TMP}|g" \
+--         "$f" | bq query --use_legacy_sql=false
+--   done

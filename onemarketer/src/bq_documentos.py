@@ -211,10 +211,11 @@ def load_pending_mp3_audios(
 def load_pending_optimized_images(
     client: bigquery.Client,
     doc_table_ref: str,
-    img_table_ref: str,
     fecha_evento: str,
+    optimized_subfolder: str = "newimages",
 ) -> list[dict[str, Any]]:
-    """Imágenes OK en documento_raw sin registro optimizado terminado."""
+    """Imágenes en documento_raw aún apuntando a media/ (sin optimizar en newimages)."""
+    subfolder = optimized_subfolder.strip("/")
     query = f"""
         SELECT
             d.idcase,
@@ -238,16 +239,8 @@ def load_pending_optimized_images(
               r'\\.(jpe?g|png|gif|bmp|tiff?|webp|avif)$'
             )
           )
-          AND NOT EXISTS (
-            SELECT 1
-            FROM `{img_table_ref}` i
-            WHERE i.fecha_evento = d.fecha_evento
-              AND i.idcase = d.idcase
-              AND i.idmessage = d.idmessage
-              AND i.conversion_status IN (
-                'OK', 'SKIPPED_EXISTS', 'SKIPPED_ALREADY_OPTIMIZED'
-              )
-          )
+          AND REGEXP_CONTAINS(IFNULL(d.gcs_uri, ''), r'/media/')
+          AND NOT REGEXP_CONTAINS(IFNULL(d.gcs_uri, ''), r'/{subfolder}/')
     """
     try:
         rows = client.query(
@@ -321,24 +314,9 @@ def load_pending_ocr_documents(
     client: bigquery.Client,
     doc_table_ref: str,
     ocr_table_ref: str,
-    img_table_ref: str | None,
     fecha_evento: str,
 ) -> list[dict[str, Any]]:
-    """Imágenes/PDFs en documento_raw sin OCR; incluye WebP optimizado si existe."""
-    img_join = ""
-    optimized_col = "CAST(NULL AS STRING) AS optimized_gcs_uri"
-    if img_table_ref:
-        img_join = f"""
-        LEFT JOIN `{img_table_ref}` i
-          ON i.fecha_evento = d.fecha_evento
-         AND i.idcase = d.idcase
-         AND i.idmessage = d.idmessage
-         AND i.conversion_status IN (
-           'OK', 'SKIPPED_EXISTS', 'SKIPPED_ALREADY_OPTIMIZED'
-         )
-        """
-        optimized_col = "i.gcs_uri AS optimized_gcs_uri"
-
+    """Imágenes/PDFs en documento_raw sin OCR (gcs_uri ya es el archivo canónico)."""
     query = f"""
         SELECT
             d.idcase,
@@ -348,10 +326,8 @@ def load_pending_ocr_documents(
             d.source_file_name,
             d.mime,
             d.waid,
-            d.media_type,
-            {optimized_col}
+            d.media_type
         FROM `{doc_table_ref}` d
-        {img_join}
         WHERE d.fecha_evento = @fecha_evento
           AND d.download_status = 'OK'
           AND d.gcs_uri IS NOT NULL
@@ -403,25 +379,25 @@ def load_pending_ocr_documents(
                 "mime": row.mime,
                 "waid": row.waid,
                 "media_type": row.media_type,
-                "optimized_gcs_uri": getattr(row, "optimized_gcs_uri", None),
             }
         )
     return pending
 
 
-def load_image_keys_done(
+def load_documento_optimized_image_keys(
     client: bigquery.Client,
-    table_ref: str,
+    doc_table_ref: str,
     fecha_evento: str,
+    optimized_subfolder: str = "newimages",
 ) -> set[tuple[int, int]]:
-    """Claves con imagen optimizada ya registrada."""
+    """Claves en documento_raw cuya gcs_uri ya apunta a la carpeta optimizada."""
+    subfolder = optimized_subfolder.strip("/")
     query = f"""
         SELECT idcase, idmessage
-        FROM `{table_ref}`
+        FROM `{doc_table_ref}`
         WHERE fecha_evento = @fecha_evento
-          AND conversion_status IN (
-            'OK', 'SKIPPED_EXISTS', 'SKIPPED_ALREADY_OPTIMIZED'
-          )
+          AND download_status = 'OK'
+          AND REGEXP_CONTAINS(IFNULL(gcs_uri, ''), r'/{subfolder}/')
     """
     try:
         rows = client.query(
@@ -479,6 +455,44 @@ def load_mp3_keys_done(
         for row in rows
         if row.idcase is not None and row.idmessage is not None
     }
+
+
+def update_documento_raw_storage(
+    client: bigquery.Client,
+    table_ref: str,
+    fecha_evento: str,
+    idcase: int,
+    idmessage: int,
+    gcs_uri: str,
+    file_name: str,
+    file_size_bytes: int | None = None,
+    mime: str | None = None,
+) -> None:
+    """Actualiza gcs_uri/file_name en documento_raw tras optimizar (sin duplicar fila)."""
+    query = f"""
+        UPDATE `{table_ref}`
+        SET
+          gcs_uri = @gcs_uri,
+          file_name = @file_name,
+          file_size_bytes = COALESCE(@file_size_bytes, file_size_bytes),
+          mime = COALESCE(@mime, mime)
+        WHERE fecha_evento = @fecha_evento
+          AND idcase = @idcase
+          AND idmessage = @idmessage
+    """
+    params = [
+        bigquery.ScalarQueryParameter("fecha_evento", "DATE", fecha_evento),
+        bigquery.ScalarQueryParameter("idcase", "INT64", idcase),
+        bigquery.ScalarQueryParameter("idmessage", "INT64", idmessage),
+        bigquery.ScalarQueryParameter("gcs_uri", "STRING", gcs_uri),
+        bigquery.ScalarQueryParameter("file_name", "STRING", file_name),
+        bigquery.ScalarQueryParameter("file_size_bytes", "INT64", file_size_bytes),
+        bigquery.ScalarQueryParameter("mime", "STRING", mime),
+    ]
+    client.query(
+        query,
+        job_config=bigquery.QueryJobConfig(query_parameters=params),
+    ).result()
 
 
 def insert_rows(

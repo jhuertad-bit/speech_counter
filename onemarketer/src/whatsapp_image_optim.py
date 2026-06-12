@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from gcs_paths import dated_subfolder_blob, resolve_gcs_base
 from google.cloud import storage
 
 from image_converter import (
@@ -25,14 +26,15 @@ def _content_type(output_format: str) -> str:
 def _upload_optim_blob(
     local_path: str,
     gcp_config: dict[str, Any],
-    gcs_prefix: str,
+    gcs_base: str,
+    subfolder: str,
     fecha_evento: str,
     dest_name: str,
     output_format: str,
 ) -> str:
     project_id = gcp_config["project_id"]
     bucket_name = gcp_config["bucket_name"]
-    blob_name = f"{gcs_prefix.rstrip('/')}/{fecha_evento}/media/{dest_name}"
+    blob_name = dated_subfolder_blob(gcs_base, fecha_evento, subfolder, dest_name)
 
     client = storage.Client(project=project_id)
     blob = client.bucket(bucket_name).blob(blob_name)
@@ -42,12 +44,13 @@ def _upload_optim_blob(
 
 def _optim_exists(
     gcp_config: dict[str, Any],
-    gcs_prefix: str,
+    gcs_base: str,
+    subfolder: str,
     fecha_evento: str,
     dest_name: str,
 ) -> bool:
     bucket_name = gcp_config["bucket_name"]
-    blob_name = f"{gcs_prefix.rstrip('/')}/{fecha_evento}/media/{dest_name}"
+    blob_name = dated_subfolder_blob(gcs_base, fecha_evento, subfolder, dest_name)
     client = storage.Client(project=gcp_config["project_id"])
     return client.bucket(bucket_name).blob(blob_name).exists()
 
@@ -66,10 +69,12 @@ def convert_whatsapp_image_row(
     media_type: str | None,
     now: str,
     tmp_dir: str,
+    storage_gcs_path: str = "",
 ) -> dict[str, Any]:
-    """Convierte imagen, sube a GCS y devuelve fila para reporte_whatsapp_imagen_optimizada."""
+    """Convierte imagen, sube a GCS y devuelve resultado de conversión."""
     image_settings = img_cfg.get("image", {})
-    gcs_optim_path = img_cfg.get("gcs_path", "")
+    gcs_base = resolve_gcs_base(img_cfg, storage_gcs_path)
+    subfolder = img_cfg.get("gcs_subfolder", "newimages")
     output_format = (image_settings.get("output_format") or "webp").lower()
     dest_name = optimized_file_name(storage_file_name, output_format)
 
@@ -113,9 +118,9 @@ def convert_whatsapp_image_row(
         return base_row
 
     skip_existing = image_settings.get("skip_existing", True)
-    if skip_existing and _optim_exists(gcp_config, gcs_optim_path, fecha_evento, dest_name):
+    if skip_existing and _optim_exists(gcp_config, gcs_base, subfolder, fecha_evento, dest_name):
         bucket = gcp_config["bucket_name"]
-        blob_name = f"{gcs_optim_path.rstrip('/')}/{fecha_evento}/media/{dest_name}"
+        blob_name = dated_subfolder_blob(gcs_base, fecha_evento, subfolder, dest_name)
         base_row["gcs_uri"] = f"gs://{bucket}/{blob_name}"
         base_row["file_name"] = dest_name
         base_row["conversion_status"] = "SKIPPED_EXISTS"
@@ -127,7 +132,7 @@ def convert_whatsapp_image_row(
         meta = convert_image(local_source_path, temp_out, storage_file_name, image_settings)
         out_size = os.path.getsize(temp_out)
         gcs_uri = _upload_optim_blob(
-            temp_out, gcp_config, gcs_optim_path, fecha_evento, dest_name, output_format
+            temp_out, gcp_config, gcs_base, subfolder, fecha_evento, dest_name, output_format
         )
         base_row.update(
             {

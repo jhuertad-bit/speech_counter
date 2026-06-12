@@ -9,7 +9,7 @@ Flujo:
   3. API descargachats aporta la URL en ``download`` por idcase+idmessage.
   4. Se descarga, sube a GCS y registra en reporte_whatsapp_documento_raw.
   5. Si es audio, convierte a MP3 y registra en reporte_whatsapp_mp3.
-  6. Si es imagen, optimiza a WebP/AVIF y registra en reporte_whatsapp_imagen_optimizada.
+  6. Si es imagen, optimiza a WebP/AVIF en newimages y actualiza documento_raw.gcs_uri.
   7. Si es imagen o PDF, extrae texto (OCR) en reporte_whatsapp_ocr.
 """
 
@@ -34,13 +34,14 @@ from bq_documentos import (
     ensure_table,
     insert_rows,
     load_media_keys_ok,
-    load_image_keys_done,
+    load_documento_optimized_image_keys,
     load_mp3_keys_done,
     load_ocr_keys_done,
     load_pending_mp3_audios,
     load_pending_ocr_documents,
     load_pending_optimized_images,
     load_schema,
+    update_documento_raw_storage,
 )
 from extract_chats import load_config, parse_onemarketer_json_response
 from gcp_runtime_log import get_runtime_service_account_email
@@ -175,6 +176,7 @@ def _convert_mp3_from_gcs_row(
     gcp_config: dict[str, Any],
     mp3_cfg: dict[str, Any],
     fecha_evento: str,
+    storage_gcs_path: str,
     mime: str | None,
     now: str,
 ) -> dict[str, Any]:
@@ -198,6 +200,7 @@ def _convert_mp3_from_gcs_row(
             mime=mime or prior.get("mime"),
             now=now,
             tmp_dir=tmp,
+            storage_gcs_path=storage_gcs_path,
         )
 
 
@@ -206,6 +209,7 @@ def _backfill_pending_mp3(
     fecha_evento: str,
     gcp_config: dict[str, Any],
     mp3_cfg: dict[str, Any],
+    storage_gcs_path: str,
     bq_cfg: dict[str, Any],
     mp3_bq_cfg: dict[str, Any],
     now: str,
@@ -248,6 +252,7 @@ def _backfill_pending_mp3(
                 gcp_config=gcp_config,
                 mp3_cfg=mp3_cfg,
                 fecha_evento=fecha_evento,
+                storage_gcs_path=storage_gcs_path,
                 mime=row.get("mime"),
                 now=now,
             )
@@ -279,6 +284,7 @@ def _convert_image_from_gcs_row(
     gcp_config: dict[str, Any],
     img_cfg: dict[str, Any],
     fecha_evento: str,
+    storage_gcs_path: str,
     mime: str | None,
     media_type: str | None,
     now: str,
@@ -304,6 +310,7 @@ def _convert_image_from_gcs_row(
             media_type=media_type or prior.get("media_type"),
             now=now,
             tmp_dir=tmp,
+            storage_gcs_path=storage_gcs_path,
         )
 
 
@@ -312,36 +319,32 @@ def _backfill_pending_images(
     fecha_evento: str,
     gcp_config: dict[str, Any],
     img_cfg: dict[str, Any],
+    storage_gcs_path: str,
     bq_cfg: dict[str, Any],
-    img_bq_cfg: dict[str, Any],
     now: str,
     existing_image_keys: set[tuple[int, int]],
-    img_rows: list[dict[str, Any]],
+    processed_keys: set[tuple[int, int]],
 ) -> tuple[int, int]:
     project_id = gcp_config["project_id"]
     dataset_id = gcp_config["dataset_id"]
     doc_table = bq_cfg.get("table_id", "reporte_whatsapp_documento_raw")
-    img_table = img_bq_cfg.get("table_id", "reporte_whatsapp_imagen_optimizada")
     doc_ref = f"{project_id}.{dataset_id}.{doc_table}"
-    img_ref = f"{project_id}.{dataset_id}.{img_table}"
+    subfolder = img_cfg.get("gcs_subfolder", "newimages")
 
     bq_client = bigquery.Client(project=project_id)
-    pending = load_pending_optimized_images(bq_client, doc_ref, img_ref, fecha_evento)
+    pending = load_pending_optimized_images(
+        bq_client, doc_ref, fecha_evento, optimized_subfolder=subfolder
+    )
     if not pending:
         return 0, 0
 
     print(f"[img] Backfill: {len(pending)} imagen(es) en documento_raw sin optimizar")
     converted = 0
     failed = 0
-    queued_keys = {
-        (int(row["idcase"]), int(row["idmessage"]))
-        for row in img_rows
-        if row.get("idcase") is not None and row.get("idmessage") is not None
-    }
 
     for row in pending:
         key = (int(row["idcase"]), int(row["idmessage"]))
-        if key in existing_image_keys or key in queued_keys:
+        if key in existing_image_keys or key in processed_keys:
             continue
         print(
             f"  [img backfill] idcase={row['idcase']} idmessage={row['idmessage']} "
@@ -353,16 +356,26 @@ def _backfill_pending_images(
                 gcp_config=gcp_config,
                 img_cfg=img_cfg,
                 fecha_evento=fecha_evento,
+                storage_gcs_path=storage_gcs_path,
                 mime=row.get("mime"),
                 media_type=row.get("media_type"),
                 now=now,
             )
-            img_rows.append(img_row)
-            queued_keys.add(key)
+            processed_keys.add(key)
             if img_row.get("conversion_status") == "OK":
                 converted += 1
             elif img_row.get("conversion_status") == "FAILED":
                 failed += 1
+            _finalize_image_only_storage(
+                gcp_config=gcp_config,
+                img_cfg=img_cfg,
+                bq_cfg=bq_cfg,
+                fecha_evento=fecha_evento,
+                idcase=row.get("idcase"),
+                idmessage=row.get("idmessage"),
+                original_gcs_uri=row.get("gcs_uri"),
+                img_row=img_row,
+            )
         except Exception as exc:
             failed += 1
             print(f"    [img backfill] ✗ {exc}")
@@ -425,7 +438,6 @@ def _backfill_pending_ocr(
     ocr_cfg: dict[str, Any],
     bq_cfg: dict[str, Any],
     ocr_bq_cfg: dict[str, Any],
-    img_bq_cfg: dict[str, Any],
     now: str,
     existing_ocr_keys: set[tuple[int, int]],
     ocr_rows: list[dict[str, Any]],
@@ -436,12 +448,9 @@ def _backfill_pending_ocr(
     ocr_table = ocr_bq_cfg.get("table_id", "reporte_whatsapp_ocr")
     doc_ref = f"{project_id}.{dataset_id}.{doc_table}"
     ocr_ref = f"{project_id}.{dataset_id}.{ocr_table}"
-    img_ref = None
-    if img_bq_cfg.get("enabled", True):
-        img_ref = f"{project_id}.{dataset_id}.{img_bq_cfg.get('table_id', 'reporte_whatsapp_imagen_optimizada')}"
 
     bq_client = bigquery.Client(project=project_id)
-    pending = load_pending_ocr_documents(bq_client, doc_ref, ocr_ref, img_ref, fecha_evento)
+    pending = load_pending_ocr_documents(bq_client, doc_ref, ocr_ref, fecha_evento)
     if not pending:
         return 0, 0
 
@@ -595,6 +604,102 @@ def _upload_blob(
     return f"gs://{bucket_name}/{blob_name}"
 
 
+_IMAGE_OPT_OK = frozenset({"OK", "SKIPPED_EXISTS", "SKIPPED_ALREADY_OPTIMIZED"})
+
+
+def _image_store_original(img_cfg: dict[str, Any]) -> bool:
+    return bool(img_cfg.get("image", {}).get("store_original", False))
+
+
+def _image_opt_success(img_row: dict[str, Any] | None) -> bool:
+    return img_row is not None and img_row.get("conversion_status") in _IMAGE_OPT_OK
+
+
+def _optimized_mime(img_cfg: dict[str, Any]) -> str:
+    fmt = (img_cfg.get("image", {}).get("output_format") or "webp").lower()
+    return "image/avif" if fmt == "avif" else "image/webp"
+
+
+def _is_under_gcs_subfolder(gcs_uri: str | None, subfolder: str) -> bool:
+    return f"/{subfolder.strip('/')}/" in (gcs_uri or "")
+
+
+def _delete_gcs_blob(gcp_config: dict[str, Any], gcs_uri: str) -> bool:
+    if not gcs_uri or not gcs_uri.startswith("gs://"):
+        return False
+    bucket_name, blob_name = _parse_gcs_uri(gcs_uri)
+    client = storage.Client(project=gcp_config["project_id"])
+    blob = client.bucket(bucket_name).blob(blob_name)
+    if blob.exists():
+        blob.delete()
+        return True
+    return False
+
+
+def _apply_img_row_to_documento(
+    base_row: dict[str, Any],
+    img_row: dict[str, Any],
+    img_cfg: dict[str, Any],
+) -> None:
+    base_row["gcs_uri"] = img_row["gcs_uri"]
+    base_row["file_name"] = img_row["file_name"]
+    if img_row.get("file_size_bytes") is not None:
+        base_row["file_size_bytes"] = img_row["file_size_bytes"]
+    base_row["mime"] = _optimized_mime(img_cfg)
+
+
+def _finalize_image_only_storage(
+    *,
+    gcp_config: dict[str, Any],
+    img_cfg: dict[str, Any],
+    bq_cfg: dict[str, Any],
+    fecha_evento: str,
+    idcase: int | None,
+    idmessage: int | None,
+    original_gcs_uri: str | None,
+    img_row: dict[str, Any],
+) -> None:
+    """Elimina original en media/ y actualiza documento_raw cuando solo se guarda optimizado."""
+    if _image_store_original(img_cfg) or not _image_opt_success(img_row):
+        return
+
+    optimized_uri = img_row.get("gcs_uri")
+    subfolder = img_cfg.get("gcs_subfolder", "newimages")
+    if (
+        original_gcs_uri
+        and original_gcs_uri != optimized_uri
+        and not _is_under_gcs_subfolder(original_gcs_uri, subfolder)
+    ):
+        if _delete_gcs_blob(gcp_config, original_gcs_uri):
+            print(f"    [img] original eliminado: {original_gcs_uri}")
+
+    if original_gcs_uri and _is_under_gcs_subfolder(original_gcs_uri, subfolder):
+        return
+    if not bq_cfg.get("enabled", True) or idcase is None or idmessage is None:
+        return
+
+    project_id = gcp_config.get("project_id")
+    dataset_id = gcp_config.get("dataset_id")
+    if not project_id or not dataset_id or not optimized_uri:
+        return
+
+    table_id = bq_cfg.get("table_id", "reporte_whatsapp_documento_raw")
+    table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    client = bigquery.Client(project=project_id)
+    update_documento_raw_storage(
+        client,
+        table_ref,
+        fecha_evento,
+        int(idcase),
+        int(idmessage),
+        optimized_uri,
+        img_row["file_name"],
+        img_row.get("file_size_bytes"),
+        _optimized_mime(img_cfg),
+    )
+    print(f"    [img] documento_raw actualizado → {optimized_uri}")
+
+
 def _index_download_records(records: list[dict[str, Any]]) -> dict[tuple[int | None, int | None], dict[str, Any]]:
     index: dict[tuple[int | None, int | None], dict[str, Any]] = {}
     for record in records:
@@ -661,7 +766,8 @@ def process_media_for_date(
         ffmpeg_ok = _ffmpeg_available()
         print(
             f"[mp3] enabled=True | tabla={mp3_bq_cfg.get('table_id', 'reporte_whatsapp_mp3')} | "
-            f"gcs_path={mp3_cfg.get('gcs_path', '')} | ffmpeg={'OK' if ffmpeg_ok else 'NO ENCONTRADO'}"
+            f"gcs={gcs_path}/{{fecha}}/{mp3_cfg.get('gcs_subfolder', 'mp3')} | "
+            f"ffmpeg={'OK' if ffmpeg_ok else 'NO ENCONTRADO'}"
         )
         if not ffmpeg_ok:
             print(
@@ -689,34 +795,17 @@ def process_media_for_date(
         print("[mp3] enabled=False (audioToMp3 deshabilitado o upload_gcs=false)")
 
     img_enabled = img_cfg.get("enabled", False) and upload_gcs
-    img_bq_cfg = img_cfg.get("bigquery", {})
     if img_enabled:
         output_fmt = img_cfg.get("image", {}).get("output_format", "webp")
+        store_orig = _image_store_original(img_cfg)
         print(
             f"[img] enabled=True | formato={output_fmt} | "
-            f"tabla={img_bq_cfg.get('table_id', 'reporte_whatsapp_imagen_optimizada')} | "
-            f"gcs_path={img_cfg.get('gcs_path', '')} | "
+            f"store_original={store_orig} | "
+            f"destino=documento_raw.gcs_uri → {gcs_path}/{{fecha}}/{img_cfg.get('gcs_subfolder', 'newimages')} | "
             f"pillow={'OK' if _pillow_available() else 'NO INSTALADO'}"
         )
         if not _pillow_available():
             print("[img] ⚠️  Instala Pillow (requirements.txt) para optimizar imágenes.")
-        if img_bq_cfg.get("enabled", True) and gcp_config.get("project_id") and gcp_config.get("dataset_id"):
-            img_table_id = img_bq_cfg.get("table_id", "reporte_whatsapp_imagen_optimizada")
-            img_partition_field = img_bq_cfg.get("partition_field", "fecha_evento")
-            bq_boot = bigquery.Client(project=gcp_config["project_id"])
-            img_schema = load_schema(img_table_id)
-            ensure_table(
-                bq_boot,
-                gcp_config["project_id"],
-                gcp_config["dataset_id"],
-                img_table_id,
-                img_schema,
-                img_partition_field,
-            )
-            print(
-                f"[img] Tabla BQ asegurada: "
-                f"{gcp_config['project_id']}.{gcp_config['dataset_id']}.{img_table_id}"
-            )
     else:
         print("[img] enabled=False (imagesOptimize deshabilitado o upload_gcs=false)")
 
@@ -761,8 +850,8 @@ def process_media_for_date(
         if match_chats_only and not media_lines:
             print("Sin líneas archivo nuevas; backfill MP3/imágenes/OCR desde documento_raw.")
             mp3_rows: list[dict[str, Any]] = []
-            img_rows: list[dict[str, Any]] = []
             ocr_rows: list[dict[str, Any]] = []
+            img_processed_keys: set[tuple[int, int]] = set()
             mp3_converted = 0
             mp3_failed = 0
             img_converted = 0
@@ -774,6 +863,7 @@ def process_media_for_date(
                     fecha_evento=fecha_evento,
                     gcp_config=gcp_config,
                     mp3_cfg=mp3_cfg,
+                    storage_gcs_path=gcs_path,
                     bq_cfg=bq_cfg,
                     mp3_bq_cfg=mp3_bq_cfg,
                     now=now,
@@ -785,11 +875,11 @@ def process_media_for_date(
                     fecha_evento=fecha_evento,
                     gcp_config=gcp_config,
                     img_cfg=img_cfg,
+                    storage_gcs_path=gcs_path,
                     bq_cfg=bq_cfg,
-                    img_bq_cfg=img_bq_cfg,
                     now=now,
                     existing_image_keys=set(),
-                    img_rows=img_rows,
+                    processed_keys=img_processed_keys,
                 )
             if ocr_enabled and upload_gcs and not force_reprocess:
                 ocr_converted, ocr_failed = _backfill_pending_ocr(
@@ -798,7 +888,6 @@ def process_media_for_date(
                     ocr_cfg=ocr_cfg,
                     bq_cfg=bq_cfg,
                     ocr_bq_cfg=ocr_bq_cfg,
-                    img_bq_cfg=img_bq_cfg,
                     now=now,
                     existing_ocr_keys=set(),
                     ocr_rows=ocr_rows,
@@ -811,10 +900,6 @@ def process_media_for_date(
                     mp3_table_id = mp3_bq_cfg.get("table_id", "reporte_whatsapp_mp3")
                     insert_rows(bq_client, dataset_id, mp3_table_id, mp3_rows)
                     print(f"BigQuery MP3 (append): {len(mp3_rows)} filas")
-                if img_enabled and img_bq_cfg.get("enabled", True) and img_rows:
-                    img_table_id = img_bq_cfg.get("table_id", "reporte_whatsapp_imagen_optimizada")
-                    insert_rows(bq_client, dataset_id, img_table_id, img_rows)
-                    print(f"BigQuery IMG (append): {len(img_rows)} filas")
                 if ocr_enabled and ocr_bq_cfg.get("enabled", True) and ocr_rows:
                     ocr_table_id = ocr_bq_cfg.get("table_id", "reporte_whatsapp_ocr")
                     insert_rows(bq_client, dataset_id, ocr_table_id, ocr_rows)
@@ -830,7 +915,6 @@ def process_media_for_date(
                 "mp3_converted": mp3_converted,
                 "mp3_failed": mp3_failed,
                 "img_enabled": img_enabled,
-                "img_rows": len(img_rows),
                 "img_converted": img_converted,
                 "img_failed": img_failed,
                 "ocr_enabled": ocr_enabled,
@@ -857,8 +941,8 @@ def process_media_for_date(
 
     bq_rows: list[dict[str, Any]] = []
     mp3_rows: list[dict[str, Any]] = []
-    img_rows: list[dict[str, Any]] = []
     ocr_rows: list[dict[str, Any]] = []
+    img_processed_keys: set[tuple[int, int]] = set()
     downloaded = 0
     failed = 0
     mp3_converted = 0
@@ -886,9 +970,12 @@ def process_media_for_date(
             mp3_ref = f"{project_id}.{dataset_id}.{mp3_table}"
             existing_mp3 = load_mp3_keys_done(bq_probe, mp3_ref, fecha_evento)
         if img_enabled:
-            img_table = img_bq_cfg.get("table_id", "reporte_whatsapp_imagen_optimizada")
-            img_ref = f"{project_id}.{dataset_id}.{img_table}"
-            existing_images = load_image_keys_done(bq_probe, img_ref, fecha_evento)
+            existing_images = load_documento_optimized_image_keys(
+                bq_probe,
+                doc_ref,
+                fecha_evento,
+                optimized_subfolder=img_cfg.get("gcs_subfolder", "newimages"),
+            )
         if ocr_enabled:
             ocr_table = ocr_bq_cfg.get("table_id", "reporte_whatsapp_ocr")
             ocr_ref = f"{project_id}.{dataset_id}.{ocr_table}"
@@ -961,6 +1048,7 @@ def process_media_for_date(
                         gcp_config=gcp_config,
                         mp3_cfg=mp3_cfg,
                         fecha_evento=fecha_evento,
+                        storage_gcs_path=gcs_path,
                         mime=mime or prior.get("mime"),
                         now=now,
                     )
@@ -978,6 +1066,7 @@ def process_media_for_date(
                 prior.get("file_name"),
                 prior.get("media_type") or media_type,
             )
+            inc_img_row: dict[str, Any] | None = None
             if (
                 img_enabled
                 and prior_image
@@ -986,37 +1075,53 @@ def process_media_for_date(
                 and prior.get("file_name")
             ):
                 try:
-                    img_row = _convert_image_from_gcs_row(
+                    inc_img_row = _convert_image_from_gcs_row(
                         prior,
                         gcp_config=gcp_config,
                         img_cfg=img_cfg,
                         fecha_evento=fecha_evento,
+                        storage_gcs_path=gcs_path,
                         mime=mime or prior.get("mime"),
                         media_type=prior.get("media_type") or media_type,
                         now=now,
                     )
-                    img_rows.append(img_row)
-                    if img_row.get("conversion_status") == "OK":
+                    if inc_img_row.get("conversion_status") == "OK":
                         img_converted += 1
-                    elif img_row.get("conversion_status") == "FAILED":
+                    elif inc_img_row.get("conversion_status") == "FAILED":
                         img_failed += 1
+                    img_processed_keys.add(key)
+                    _finalize_image_only_storage(
+                        gcp_config=gcp_config,
+                        img_cfg=img_cfg,
+                        bq_cfg=bq_cfg,
+                        fecha_evento=fecha_evento,
+                        idcase=prior.get("idcase"),
+                        idmessage=prior.get("idmessage"),
+                        original_gcs_uri=prior.get("gcs_uri"),
+                        img_row=inc_img_row,
+                    )
                 except Exception as exc:
                     print(f"    [img] ✗ desde GCS existente: {exc}")
-            prior_ocr = is_ocr_candidate(
+            needs_ocr = is_ocr_candidate(
                 mime or prior.get("mime"),
                 prior.get("file_name"),
                 prior.get("media_type") or media_type,
             )
             if (
                 ocr_enabled
-                and prior_ocr
+                and needs_ocr
                 and key not in existing_ocr
                 and prior.get("gcs_uri")
                 and prior.get("file_name")
             ):
                 try:
+                    prior_ocr_ctx = dict(prior)
+                    if inc_img_row and _image_opt_success(inc_img_row):
+                        prior_ocr_ctx["gcs_uri"] = inc_img_row["gcs_uri"]
+                        prior_ocr_ctx["file_name"] = inc_img_row["file_name"]
+                        prior_ocr_ctx["optimized_gcs_uri"] = inc_img_row["gcs_uri"]
                     ocr_row = _convert_ocr_from_gcs_row(
-                        prior,
+                        prior_ocr_ctx,
                         gcp_config=gcp_config,
                         ocr_cfg=ocr_cfg,
                         fecha_evento=fecha_evento,
@@ -1043,13 +1148,82 @@ def process_media_for_date(
                 source_file_name = os.path.basename(final_path)
                 # file_name = nombre en GCS (debe calzar con el final de gcs_uri)
                 storage_file_name = object_name
+                should_img = is_image_for_optimize(mime, storage_file_name, media_type)
+                img_row: dict[str, Any] | None = None
+                store_original = _image_store_original(img_cfg)
+
+                if (
+                    img_enabled
+                    and should_img
+                    and not store_original
+                    and key not in existing_images
+                ):
+                    img_row = convert_whatsapp_image_row(
+                        local_source_path=final_path,
+                        storage_file_name=storage_file_name,
+                        source_file_name=source_file_name,
+                        source_gcs_uri=None,
+                        gcp_config=gcp_config,
+                        img_cfg=img_cfg,
+                        fecha_evento=fecha_evento,
+                        chat_line=chat_line,
+                        mime=mime,
+                        media_type=media_type,
+                        now=now,
+                        tmp_dir=tmp,
+                        storage_gcs_path=gcs_path,
+                    )
+                    if img_row.get("conversion_status") == "OK":
+                        img_converted += 1
+                    elif img_row.get("conversion_status") == "FAILED":
+                        img_failed += 1
+                    img_processed_keys.add(key)
 
                 gcs_uri = None
                 if upload_gcs:
-                    gcs_uri = _upload_blob(
-                        final_path, gcp_config, gcs_path, fecha_evento, object_name
-                    )
-                    print(f"    → {gcs_uri}")
+                    if _image_opt_success(img_row) and not store_original:
+                        gcs_uri = img_row["gcs_uri"]
+                        print(f"    → {gcs_uri} (solo optimizado)")
+                    else:
+                        gcs_uri = _upload_blob(
+                            final_path, gcp_config, gcs_path, fecha_evento, object_name
+                        )
+                        print(f"    → {gcs_uri}")
+                        if (
+                            img_enabled
+                            and should_img
+                            and store_original
+                            and key not in existing_images
+                            and img_row is None
+                        ):
+                            img_row = convert_whatsapp_image_row(
+                                local_source_path=final_path,
+                                storage_file_name=storage_file_name,
+                                source_file_name=source_file_name,
+                                source_gcs_uri=gcs_uri,
+                                gcp_config=gcp_config,
+                                img_cfg=img_cfg,
+                                fecha_evento=fecha_evento,
+                                chat_line=chat_line,
+                                mime=mime,
+                                media_type=media_type,
+                                now=now,
+                                tmp_dir=tmp,
+                                storage_gcs_path=gcs_path,
+                            )
+                            if img_row.get("conversion_status") == "OK":
+                                img_converted += 1
+                            elif img_row.get("conversion_status") == "FAILED":
+                                img_failed += 1
+                            img_processed_keys.add(key)
+                        elif (
+                            img_enabled
+                            and should_img
+                            and not store_original
+                            and img_row is not None
+                            and not _image_opt_success(img_row)
+                        ):
+                            print("    [img] fallback: se conserva original en media/")
                 elif storage_cfg.get("save_local_files", True):
                     local_dir = storage_cfg.get("local_dir", "descarga")
                     folder = os.path.join(local_dir, str(idmessage))
@@ -1060,9 +1234,12 @@ def process_media_for_date(
                     print(f"    → local {dest}")
 
                 base_row["source_file_name"] = source_file_name
-                base_row["gcs_uri"] = gcs_uri
-                base_row["file_name"] = storage_file_name
-                base_row["file_size_bytes"] = file_size
+                if _image_opt_success(img_row) and not store_original:
+                    _apply_img_row_to_documento(base_row, img_row, img_cfg)
+                else:
+                    base_row["gcs_uri"] = gcs_uri
+                    base_row["file_name"] = storage_file_name
+                    base_row["file_size_bytes"] = file_size
                 base_row["download_status"] = "OK"
                 downloaded += 1
 
@@ -1082,6 +1259,7 @@ def process_media_for_date(
                         mime=mime,
                         now=now,
                         tmp_dir=tmp,
+                        storage_gcs_path=gcs_path,
                     )
                     mp3_rows.append(mp3_row)
                     if mp3_row.get("conversion_status") == "OK":
@@ -1089,45 +1267,15 @@ def process_media_for_date(
                     elif mp3_row.get("conversion_status") == "FAILED":
                         mp3_failed += 1
 
-                should_img = is_image_for_optimize(mime, storage_file_name, media_type)
-                img_row: dict[str, Any] | None = None
-                if img_enabled and should_img and key not in existing_images:
-                    img_row = convert_whatsapp_image_row(
-                        local_source_path=final_path,
-                        storage_file_name=storage_file_name,
-                        source_file_name=source_file_name,
-                        source_gcs_uri=gcs_uri,
-                        gcp_config=gcp_config,
-                        img_cfg=img_cfg,
-                        fecha_evento=fecha_evento,
-                        chat_line=chat_line,
-                        mime=mime,
-                        media_type=media_type,
-                        now=now,
-                        tmp_dir=tmp,
-                    )
-                    img_rows.append(img_row)
-                    if img_row.get("conversion_status") == "OK":
-                        img_converted += 1
-                    elif img_row.get("conversion_status") == "FAILED":
-                        img_failed += 1
-
-                optimized_uri = None
-                if img_row and img_row.get("conversion_status") in (
-                    "OK",
-                    "SKIPPED_EXISTS",
-                    "SKIPPED_ALREADY_OPTIMIZED",
-                ):
-                    optimized_uri = img_row.get("gcs_uri")
-
                 should_ocr = is_ocr_candidate(mime, storage_file_name, media_type)
                 if ocr_enabled and should_ocr and key not in existing_ocr:
+                    doc_gcs_uri = base_row.get("gcs_uri") or gcs_uri
                     ocr_row = convert_whatsapp_ocr_row(
                         local_source_path=final_path,
-                        storage_file_name=storage_file_name,
+                        storage_file_name=base_row.get("file_name") or storage_file_name,
                         source_file_name=source_file_name,
-                        source_gcs_uri=gcs_uri,
-                        optimized_gcs_uri=optimized_uri,
+                        source_gcs_uri=doc_gcs_uri,
+                        optimized_gcs_uri=img_row.get("gcs_uri") if _image_opt_success(img_row) else None,
                         gcp_config=gcp_config,
                         ocr_cfg=ocr_cfg,
                         fecha_evento=fecha_evento,
@@ -1154,6 +1302,7 @@ def process_media_for_date(
             fecha_evento=fecha_evento,
             gcp_config=gcp_config,
             mp3_cfg=mp3_cfg,
+            storage_gcs_path=gcs_path,
             bq_cfg=bq_cfg,
             mp3_bq_cfg=mp3_bq_cfg,
             now=now,
@@ -1168,11 +1317,11 @@ def process_media_for_date(
             fecha_evento=fecha_evento,
             gcp_config=gcp_config,
             img_cfg=img_cfg,
+            storage_gcs_path=gcs_path,
             bq_cfg=bq_cfg,
-            img_bq_cfg=img_bq_cfg,
             now=now,
             existing_image_keys=existing_images,
-            img_rows=img_rows,
+            processed_keys=img_processed_keys,
         )
         img_converted += backfill_ok
         img_failed += backfill_fail
@@ -1184,7 +1333,6 @@ def process_media_for_date(
             ocr_cfg=ocr_cfg,
             bq_cfg=bq_cfg,
             ocr_bq_cfg=ocr_bq_cfg,
-            img_bq_cfg=img_bq_cfg,
             now=now,
             existing_ocr_keys=existing_ocr,
             ocr_rows=ocr_rows,
@@ -1224,23 +1372,6 @@ def process_media_for_date(
         mode = "reemplazo" if force_reprocess else "append"
         print(f"BigQuery MP3 ({mode}): {len(mp3_rows)} filas nuevas en {mp3_table_ref}")
 
-    if img_enabled and img_bq_cfg.get("enabled", True) and img_rows:
-        project_id = gcp_config["project_id"]
-        dataset_id = gcp_config["dataset_id"]
-        img_table_id = img_bq_cfg.get("table_id", "reporte_whatsapp_imagen_optimizada")
-        img_partition_field = img_bq_cfg.get("partition_field", "fecha_evento")
-
-        bq_client = bigquery.Client(project=project_id)
-        img_schema = load_schema(img_table_id)
-        img_table_ref = ensure_table(
-            bq_client, project_id, dataset_id, img_table_id, img_schema, img_partition_field
-        )
-        if force_reprocess:
-            delete_partition(bq_client, img_table_ref, fecha_evento, img_partition_field)
-        insert_rows(bq_client, dataset_id, img_table_id, img_rows)
-        mode = "reemplazo" if force_reprocess else "append"
-        print(f"BigQuery IMG ({mode}): {len(img_rows)} filas nuevas en {img_table_ref}")
-
     if ocr_enabled and ocr_bq_cfg.get("enabled", True) and ocr_rows:
         project_id = gcp_config["project_id"]
         dataset_id = gcp_config["dataset_id"]
@@ -1274,7 +1405,6 @@ def process_media_for_date(
         "mp3_failed": mp3_failed,
         "ffmpeg_available": _ffmpeg_available() if mp3_enabled else None,
         "img_enabled": img_enabled,
-        "img_rows": len(img_rows),
         "img_converted": img_converted,
         "img_failed": img_failed,
         "ocr_enabled": ocr_enabled,

@@ -6,6 +6,7 @@ import os
 from typing import Any
 
 from converter import convert_audio_to_mp3, is_supported_audio, normalize_extension
+from gcs_paths import dated_subfolder_blob, resolve_gcs_base
 from google.cloud import storage
 
 
@@ -17,13 +18,14 @@ def mp3_file_name(storage_file_name: str) -> str:
 def _upload_mp3_blob(
     local_mp3_path: str,
     gcp_config: dict[str, Any],
-    gcs_prefix: str,
+    gcs_base: str,
+    subfolder: str,
     fecha_evento: str,
     mp3_name: str,
 ) -> str:
     project_id = gcp_config["project_id"]
     bucket_name = gcp_config["bucket_name"]
-    blob_name = f"{gcs_prefix.rstrip('/')}/{fecha_evento}/media/{mp3_name}"
+    blob_name = dated_subfolder_blob(gcs_base, fecha_evento, subfolder, mp3_name)
 
     client = storage.Client(project=project_id)
     bucket = client.bucket(bucket_name)
@@ -32,9 +34,15 @@ def _upload_mp3_blob(
     return f"gs://{bucket_name}/{blob_name}"
 
 
-def _mp3_exists(gcp_config: dict[str, Any], gcs_prefix: str, fecha_evento: str, mp3_name: str) -> bool:
+def _mp3_exists(
+    gcp_config: dict[str, Any],
+    gcs_base: str,
+    subfolder: str,
+    fecha_evento: str,
+    mp3_name: str,
+) -> bool:
     bucket_name = gcp_config["bucket_name"]
-    blob_name = f"{gcs_prefix.rstrip('/')}/{fecha_evento}/media/{mp3_name}"
+    blob_name = dated_subfolder_blob(gcs_base, fecha_evento, subfolder, mp3_name)
     client = storage.Client(project=gcp_config["project_id"])
     return client.bucket(bucket_name).blob(blob_name).exists()
 
@@ -52,12 +60,14 @@ def convert_whatsapp_audio_row(
     mime: str | None,
     now: str,
     tmp_dir: str,
+    storage_gcs_path: str = "",
 ) -> dict[str, Any]:
     """
     Convierte un audio descargado a MP3, sube a GCS y devuelve fila para reporte_whatsapp_mp3.
     """
     audio_cfg = mp3_cfg.get("audio", {})
-    gcs_mp3_path = mp3_cfg.get("gcs_path", "")
+    gcs_base = resolve_gcs_base(mp3_cfg, storage_gcs_path)
+    subfolder = mp3_cfg.get("gcs_subfolder", "mp3")
     mp3_name = mp3_file_name(storage_file_name)
 
     base_row: dict[str, Any] = {
@@ -92,9 +102,9 @@ def convert_whatsapp_audio_row(
     ext = normalize_extension(storage_file_name)
     skip_existing = audio_cfg.get("skip_existing_mp3", True)
 
-    if skip_existing and _mp3_exists(gcp_config, gcs_mp3_path, fecha_evento, mp3_name):
+    if skip_existing and _mp3_exists(gcp_config, gcs_base, subfolder, fecha_evento, mp3_name):
         bucket = gcp_config["bucket_name"]
-        blob_name = f"{gcs_mp3_path.rstrip('/')}/{fecha_evento}/media/{mp3_name}"
+        blob_name = dated_subfolder_blob(gcs_base, fecha_evento, subfolder, mp3_name)
         base_row["gcs_uri"] = f"gs://{bucket}/{blob_name}"
         base_row["file_name"] = mp3_name
         base_row["conversion_status"] = "SKIPPED_EXISTS"
@@ -118,7 +128,7 @@ def convert_whatsapp_audio_row(
         )
         mp3_size = os.path.getsize(temp_mp3)
         gcs_uri = _upload_mp3_blob(
-            temp_mp3, gcp_config, gcs_mp3_path, fecha_evento, mp3_name
+            temp_mp3, gcp_config, gcs_base, subfolder, fecha_evento, mp3_name
         )
         base_row.update(
             {

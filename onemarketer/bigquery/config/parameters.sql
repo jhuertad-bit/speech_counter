@@ -19,7 +19,7 @@
 --   EXTERNAL_TABLE_TMP  = `prd-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`
 --
 -- Fuente MP3 (ETL onemarketer):
---   raw_onemarketer.reporte_whatsapp_mp3  →  gcs_uri bajo getChats/mp3/{fecha}/media/
+--   raw_onemarketer.reporte_whatsapp_mp3  →  gcs_uri bajo getChats/{fecha}/mp3/
 --
 -- Orquestación sugerida:
 --   Cloud Scheduler / ADF → CALL analytics.sp_onemarketer_whatsapp_gen_ia(DATE);

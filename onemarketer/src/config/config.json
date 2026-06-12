@@ -84,7 +84,7 @@
      },
      "audioToMp3":{
         "enabled":true,
-        "gcs_path":"utp_pregrado_endpoint/reporteChats/services/getChats/mp3",
+        "gcs_subfolder":"mp3",
         "audio":{
            "supported_extensions":[
               ".ogg",".opus",".wav",".wave",".flac",".m4a",".aac",
@@ -105,19 +105,15 @@
      },
      "imagesOptimize":{
         "enabled":true,
-        "gcs_path":"utp_pregrado_endpoint/reporteChats/services/getChats/newimages",
+        "gcs_subfolder":"newimages",
         "image":{
+           "store_original":false,
            "output_format":"webp",
            "quality":82,
            "supported_extensions":[".jpg",".jpeg",".png",".gif",".bmp",".tiff",".tif"],
            "skip_existing":true,
            "convert_animated_gif":false,
            "ffmpeg_timeout_seconds":120
-        },
-        "bigquery":{
-           "enabled":true,
-           "table_id":"reporte_whatsapp_imagen_optimizada",
-           "partition_field":"fecha_evento"
         }
      },
      "textExtraction":{

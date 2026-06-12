@@ -40,7 +40,7 @@ steps:
       - '_MAX_INSTANCES=${_MAX_INSTANCES}'
       - '_CONCURRENCY=${_CONCURRENCY}'
       - '_ALLOW_UNAUTHENTICATED=${_ALLOW_UNAUTHENTICATED}'
-      - '_SOURCE_DIR=onemarketer'
+      - '_SOURCE_DIR=onemarketer/src'
 
 options:
   logging: CLOUD_LOGGING_ONLY

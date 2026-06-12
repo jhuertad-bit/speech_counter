@@ -1,3 +1,7 @@
+# Deploy local / Cloud Build (gcloud functions deploy --source=.)
+deploy.sh
+scheduler-setup.sh
+
 # Archivos de desarrollo
 *.pyc
 __pycache__/

@@ -33,7 +33,7 @@ MEMORY="${_MEMORY:-6144MB}"
 TIMEOUT="${_TIMEOUT:-540s}"
 MAX_INSTANCES="${_MAX_INSTANCES:-30}"
 CONCURRENCY="${_CONCURRENCY:-1}"
-SOURCE_DIR="${_SOURCE_DIR:-audio_to_mp3}"
+SOURCE_DIR="${_SOURCE_DIR:-audio_to_mp3/src}"
 
 echo "=== gcloud functions deploy ${_FUNCTION_NAME} (source: ${SOURCE_DIR}/ + Dockerfile) ==="
 gcloud functions deploy "${_FUNCTION_NAME}" \

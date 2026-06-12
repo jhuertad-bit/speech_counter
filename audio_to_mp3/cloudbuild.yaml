@@ -32,7 +32,7 @@ steps:
       - '_TIMEOUT=${_TIMEOUT}'
       - '_MAX_INSTANCES=${_MAX_INSTANCES}'
       - '_CONCURRENCY=${_CONCURRENCY}'
-      - '_SOURCE_DIR=audio_to_mp3'
+      - '_SOURCE_DIR=audio_to_mp3/src'
 
 options:
   logging: CLOUD_LOGGING_ONLY

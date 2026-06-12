@@ -61,6 +61,7 @@
      "filter":{
         "match_reporte_chats_only":true,
         "mime_audio_patterns":["audio","ogg","opus","mpeg","ptt","voice","amr"],
+        "mime_video_audio_patterns":["video/mpeg","video/mpg","video/x-mpeg","video/quicktime"],
         "mime_media_patterns":["image","video","document","pdf","application/"],
         "mime_skip_patterns":["text/plain","text/html"]
      },
@@ -83,12 +84,14 @@
      },
      "audioToMp3":{
         "enabled":true,
-        "gcs_path":"utp_pregrado_endpoint/reporteChats/services/getChats_mp3",
+        "gcs_path":"utp_pregrado_endpoint/reporteChats/services/getChats/mp3",
         "audio":{
            "supported_extensions":[
               ".ogg",".opus",".wav",".wave",".flac",".m4a",".aac",
-              ".wma",".amr",".3gp",".mp4",".webm",".aiff",".aif",".caf",".mp2",".mp3"
+              ".wma",".amr",".3gp",".mp4",".webm",".aiff",".aif",".caf",".mp2",".mp3",
+              ".mpeg",".mpg",".mov",".avi",".mkv",".m4v",".wmv",".flv",".ts"
            ],
+           "include_video_containers":true,
            "default_bitrate":"128k",
            "skip_existing_mp3":true,
            "min_duration_seconds":0.1,
@@ -97,6 +100,40 @@
         "bigquery":{
            "enabled":true,
            "table_id":"reporte_whatsapp_mp3",
+           "partition_field":"fecha_evento"
+        }
+     },
+     "imagesOptimize":{
+        "enabled":true,
+        "gcs_path":"utp_pregrado_endpoint/reporteChats/services/getChats/newimages",
+        "image":{
+           "output_format":"webp",
+           "quality":82,
+           "supported_extensions":[".jpg",".jpeg",".png",".gif",".bmp",".tiff",".tif"],
+           "skip_existing":true,
+           "convert_animated_gif":false,
+           "ffmpeg_timeout_seconds":120
+        },
+        "bigquery":{
+           "enabled":true,
+           "table_id":"reporte_whatsapp_imagen_optimizada",
+           "partition_field":"fecha_evento"
+        }
+     },
+     "textExtraction":{
+        "enabled":true,
+        "engine":"vision_api",
+        "ocr":{
+           "input_preference":"optimized_webp_then_raw",
+           "languages":["es"],
+           "pdf_min_native_chars":30,
+           "pdf_max_pages_ocr":20,
+           "pdf_render_dpi":150,
+           "min_result_chars":1
+        },
+        "bigquery":{
+           "enabled":true,
+           "table_id":"reporte_whatsapp_ocr",
            "partition_field":"fecha_evento"
         }
      }

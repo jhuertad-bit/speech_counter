@@ -11,8 +11,10 @@
   "audio": {
     "supported_extensions": [
       ".ogg", ".opus", ".wav", ".wave", ".flac", ".m4a", ".aac",
-      ".wma", ".amr", ".3gp", ".mp4", ".webm", ".aiff", ".aif", ".caf", ".mp2"
+      ".wma", ".amr", ".3gp", ".mp4", ".webm", ".aiff", ".aif", ".caf", ".mp2",
+      ".mpeg", ".mpg", ".mov", ".avi", ".mkv", ".m4v", ".wmv", ".flv", ".ts"
     ],
+    "include_video_containers": true,
     "default_bitrate": "128k",
     "skip_existing_mp3": true,
     "min_duration_seconds": 0.1,

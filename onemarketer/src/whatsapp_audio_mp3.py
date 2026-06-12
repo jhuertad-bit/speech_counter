@@ -81,7 +81,10 @@ def convert_whatsapp_audio_row(
     }
 
     supported = audio_cfg.get("supported_extensions", [])
-    if not is_supported_audio(storage_file_name, supported):
+    include_video = audio_cfg.get("include_video_containers", True)
+    if not is_supported_audio(
+        storage_file_name, supported, include_video_containers=include_video
+    ):
         base_row["conversion_status"] = "SKIPPED_UNSUPPORTED"
         base_row["error_message"] = f"Extensión no soportada: {storage_file_name}"
         return base_row

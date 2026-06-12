@@ -104,7 +104,10 @@ def audio_to_mp3_converter(cloud_event):
         return
 
     supported = audio_cfg.get("supported_extensions", [])
-    if not is_supported_audio(os.path.basename(file_path), supported):
+    include_video = audio_cfg.get("include_video_containers", True)
+    if not is_supported_audio(
+        os.path.basename(file_path), supported, include_video_containers=include_video
+    ):
         logger.info("Extension not supported, skipping: %s", file_path)
         return
 

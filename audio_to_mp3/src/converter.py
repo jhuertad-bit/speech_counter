@@ -1,5 +1,7 @@
 """
-Detección y conversión de cualquier formato de audio soportado por ffmpeg hacia MP3.
+Detección y conversión de audio hacia MP3 vía ffmpeg/pydub.
+
+Incluye contenedores de video con pista de audio (p. ej. video/mpeg, .mpg de WhatsApp).
 """
 
 from __future__ import annotations
@@ -37,7 +39,30 @@ PYDUB_FORMAT_HINTS: dict[str, str] = {
     ".aif": "aiff",
     ".caf": "caf",
     ".mp2": "mp2",
+    ".mpeg": "mpeg",
+    ".mpg": "mpeg",
+    ".mpe": "mpeg",
+    ".m2v": "mpeg",
+    ".mov": "mov",
+    ".qt": "mov",
+    ".avi": "avi",
+    ".mkv": "matroska",
+    ".m4v": "mp4",
+    ".wmv": "wmv",
+    ".asf": "wmv",
+    ".flv": "flv",
+    ".f4v": "flv",
+    ".ts": "mpegts",
+    ".m2ts": "mpegts",
+    ".mts": "mpegts",
+    ".vob": "mpeg",
 }
+
+# Contenedores de video (MPEG, MOV, etc.) con pista de audio — común en notas de voz WhatsApp
+VIDEO_AUDIO_EXTENSIONS: frozenset[str] = frozenset({
+    ".mpeg", ".mpg", ".mpe", ".m2v", ".mov", ".qt", ".avi", ".mkv", ".m4v",
+    ".wmv", ".asf", ".flv", ".f4v", ".ts", ".m2ts", ".mts", ".vob",
+})
 
 
 def normalize_extension(file_name: str) -> str:
@@ -45,10 +70,23 @@ def normalize_extension(file_name: str) -> str:
     return ext
 
 
-def is_supported_audio(file_name: str, supported_extensions: list[str]) -> bool:
+def is_video_audio_container(file_name: str) -> bool:
+    return normalize_extension(file_name) in VIDEO_AUDIO_EXTENSIONS
+
+
+def is_supported_audio(
+    file_name: str,
+    supported_extensions: list[str],
+    *,
+    include_video_containers: bool = True,
+) -> bool:
     ext = normalize_extension(file_name)
     normalized = [e.lower() if e.startswith(".") else f".{e.lower()}" for e in supported_extensions]
-    return ext in normalized
+    if ext in normalized:
+        return True
+    if include_video_containers and ext in VIDEO_AUDIO_EXTENSIONS:
+        return True
+    return False
 
 
 def probe_audio(file_path: str) -> dict[str, Any] | None:
@@ -165,29 +203,39 @@ def convert_audio_to_mp3(
     Retorna metadata de la conversión.
     """
     extension = normalize_extension(file_name)
+    include_video = audio_cfg.get("include_video_containers", True)
+    supported = audio_cfg.get("supported_extensions", [])
     default_bitrate = audio_cfg.get("default_bitrate", "128k")
     timeout = int(audio_cfg.get("ffmpeg_timeout_seconds", 300))
     min_duration = float(audio_cfg.get("min_duration_seconds", 0.1))
 
+    if not is_supported_audio(file_name, supported, include_video_containers=include_video):
+        raise ValueError(f"Extensión no soportada: {file_name}")
+
     probe = probe_audio(input_path)
     if probe is None:
-        raise ValueError(f"File is not a valid audio stream: {file_name}")
+        raise ValueError(f"Sin pista de audio válida (puede ser video sin audio): {file_name}")
 
     if probe["duration"] < min_duration:
         raise ValueError(f"Audio duration below minimum ({probe['duration']}s)")
 
     bitrate = get_audio_bitrate(input_path) or default_bitrate
     method = "ffmpeg"
+    video_container = is_video_audio_container(file_name)
 
-    try:
-        convert_with_pydub(input_path, output_path, bitrate, extension)
-        method = "pydub"
-    except (CouldntDecodeError, Exception) as pydub_error:
-        logger.warning("pydub failed (%s), using ffmpeg", pydub_error)
-        if os.path.exists(output_path):
-            os.remove(output_path)
+    # Contenedores MPEG/video: ffmpeg -vn extrae solo audio (pydub suele fallar)
+    if video_container:
         convert_with_ffmpeg(input_path, output_path, bitrate, timeout=timeout)
-        method = "ffmpeg"
+    else:
+        try:
+            convert_with_pydub(input_path, output_path, bitrate, extension)
+            method = "pydub"
+        except (CouldntDecodeError, Exception) as pydub_error:
+            logger.warning("pydub failed (%s), using ffmpeg", pydub_error)
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            convert_with_ffmpeg(input_path, output_path, bitrate, timeout=timeout)
+            method = "ffmpeg"
 
     return {
         "method": method,

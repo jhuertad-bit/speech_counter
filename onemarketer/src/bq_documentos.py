@@ -156,11 +156,11 @@ def load_pending_mp3_audios(
             LOWER(IFNULL(d.media_type, '')) = 'audio'
             OR REGEXP_CONTAINS(
               LOWER(IFNULL(d.file_name, '')),
-              r'\\.(ogg|opus|m4a|amr|wav|flac|aac|webm|caf|aiff|aif|mp3)$'
+              r'\\.(ogg|opus|m4a|amr|wav|flac|aac|webm|caf|aiff|aif|mp3|mpeg|mpg|mov|avi|mkv|m4v|wmv|flv|ts)$'
             )
             OR REGEXP_CONTAINS(
               LOWER(IFNULL(d.mime, '')),
-              r'audio|ogg|opus|ptt|voice|amr'
+              r'audio|ogg|opus|ptt|voice|amr|video/mpeg|video/mpg|video/x-mpeg'
             )
           )
           AND NOT EXISTS (
@@ -206,6 +206,243 @@ def load_pending_mp3_audios(
             }
         )
     return pending
+
+
+def load_pending_optimized_images(
+    client: bigquery.Client,
+    doc_table_ref: str,
+    img_table_ref: str,
+    fecha_evento: str,
+) -> list[dict[str, Any]]:
+    """Imágenes OK en documento_raw sin registro optimizado terminado."""
+    query = f"""
+        SELECT
+            d.idcase,
+            d.idmessage,
+            d.gcs_uri,
+            d.file_name,
+            d.source_file_name,
+            d.mime,
+            d.waid,
+            d.media_type
+        FROM `{doc_table_ref}` d
+        WHERE d.fecha_evento = @fecha_evento
+          AND d.download_status = 'OK'
+          AND d.gcs_uri IS NOT NULL
+          AND d.file_name IS NOT NULL
+          AND (
+            LOWER(IFNULL(d.media_type, '')) = 'image'
+            OR STARTS_WITH(LOWER(IFNULL(d.mime, '')), 'image/')
+            OR REGEXP_CONTAINS(
+              LOWER(IFNULL(d.file_name, '')),
+              r'\\.(jpe?g|png|gif|bmp|tiff?|webp|avif)$'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM `{img_table_ref}` i
+            WHERE i.fecha_evento = d.fecha_evento
+              AND i.idcase = d.idcase
+              AND i.idmessage = d.idmessage
+              AND i.conversion_status IN (
+                'OK', 'SKIPPED_EXISTS', 'SKIPPED_ALREADY_OPTIMIZED'
+              )
+          )
+    """
+    try:
+        rows = client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("fecha_evento", "DATE", fecha_evento),
+                ]
+            ),
+        ).result()
+    except Exception as exc:
+        err = str(exc).lower()
+        if "not found" in err or "404" in err:
+            return []
+        raise
+
+    pending: list[dict[str, Any]] = []
+    for row in rows:
+        if row.idcase is None or row.idmessage is None:
+            continue
+        pending.append(
+            {
+                "idcase": row.idcase,
+                "idmessage": row.idmessage,
+                "gcs_uri": row.gcs_uri,
+                "file_name": row.file_name,
+                "source_file_name": row.source_file_name,
+                "mime": row.mime,
+                "waid": row.waid,
+                "media_type": row.media_type,
+            }
+        )
+    return pending
+
+
+def load_ocr_keys_done(
+    client: bigquery.Client,
+    table_ref: str,
+    fecha_evento: str,
+) -> set[tuple[int, int]]:
+    """Claves con OCR ya registrado (éxito o sin texto)."""
+    query = f"""
+        SELECT idcase, idmessage
+        FROM `{table_ref}`
+        WHERE fecha_evento = @fecha_evento
+          AND ocr_status IN ('OK', 'SKIPPED_NO_TEXT')
+    """
+    try:
+        rows = client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("fecha_evento", "DATE", fecha_evento),
+                ]
+            ),
+        ).result()
+    except Exception as exc:
+        err = str(exc).lower()
+        if "not found" in err or "404" in err:
+            return set()
+        raise
+
+    return {
+        (int(row.idcase), int(row.idmessage))
+        for row in rows
+        if row.idcase is not None and row.idmessage is not None
+    }
+
+
+def load_pending_ocr_documents(
+    client: bigquery.Client,
+    doc_table_ref: str,
+    ocr_table_ref: str,
+    img_table_ref: str | None,
+    fecha_evento: str,
+) -> list[dict[str, Any]]:
+    """Imágenes/PDFs en documento_raw sin OCR; incluye WebP optimizado si existe."""
+    img_join = ""
+    optimized_col = "CAST(NULL AS STRING) AS optimized_gcs_uri"
+    if img_table_ref:
+        img_join = f"""
+        LEFT JOIN `{img_table_ref}` i
+          ON i.fecha_evento = d.fecha_evento
+         AND i.idcase = d.idcase
+         AND i.idmessage = d.idmessage
+         AND i.conversion_status IN (
+           'OK', 'SKIPPED_EXISTS', 'SKIPPED_ALREADY_OPTIMIZED'
+         )
+        """
+        optimized_col = "i.gcs_uri AS optimized_gcs_uri"
+
+    query = f"""
+        SELECT
+            d.idcase,
+            d.idmessage,
+            d.gcs_uri,
+            d.file_name,
+            d.source_file_name,
+            d.mime,
+            d.waid,
+            d.media_type,
+            {optimized_col}
+        FROM `{doc_table_ref}` d
+        {img_join}
+        WHERE d.fecha_evento = @fecha_evento
+          AND d.download_status = 'OK'
+          AND d.gcs_uri IS NOT NULL
+          AND d.file_name IS NOT NULL
+          AND (
+            LOWER(IFNULL(d.media_type, '')) IN ('image', 'document')
+            OR STARTS_WITH(LOWER(IFNULL(d.mime, '')), 'image/')
+            OR LOWER(IFNULL(d.mime, '')) LIKE '%pdf%'
+            OR REGEXP_CONTAINS(
+              LOWER(IFNULL(d.file_name, '')),
+              r'\\.(jpe?g|png|gif|bmp|tiff?|webp|avif|pdf)$'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM `{ocr_table_ref}` o
+            WHERE o.fecha_evento = d.fecha_evento
+              AND o.idcase = d.idcase
+              AND o.idmessage = d.idmessage
+              AND o.ocr_status IN ('OK', 'SKIPPED_NO_TEXT')
+          )
+    """
+    try:
+        rows = client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("fecha_evento", "DATE", fecha_evento),
+                ]
+            ),
+        ).result()
+    except Exception as exc:
+        err = str(exc).lower()
+        if "not found" in err or "404" in err:
+            return []
+        raise
+
+    pending: list[dict[str, Any]] = []
+    for row in rows:
+        if row.idcase is None or row.idmessage is None:
+            continue
+        pending.append(
+            {
+                "idcase": row.idcase,
+                "idmessage": row.idmessage,
+                "gcs_uri": row.gcs_uri,
+                "file_name": row.file_name,
+                "source_file_name": row.source_file_name,
+                "mime": row.mime,
+                "waid": row.waid,
+                "media_type": row.media_type,
+                "optimized_gcs_uri": getattr(row, "optimized_gcs_uri", None),
+            }
+        )
+    return pending
+
+
+def load_image_keys_done(
+    client: bigquery.Client,
+    table_ref: str,
+    fecha_evento: str,
+) -> set[tuple[int, int]]:
+    """Claves con imagen optimizada ya registrada."""
+    query = f"""
+        SELECT idcase, idmessage
+        FROM `{table_ref}`
+        WHERE fecha_evento = @fecha_evento
+          AND conversion_status IN (
+            'OK', 'SKIPPED_EXISTS', 'SKIPPED_ALREADY_OPTIMIZED'
+          )
+    """
+    try:
+        rows = client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("fecha_evento", "DATE", fecha_evento),
+                ]
+            ),
+        ).result()
+    except Exception as exc:
+        err = str(exc).lower()
+        if "not found" in err or "404" in err:
+            return set()
+        raise
+
+    return {
+        (int(row.idcase), int(row.idmessage))
+        for row in rows
+        if row.idcase is not None and row.idmessage is not None
+    }
 
 
 def load_mp3_keys_done(

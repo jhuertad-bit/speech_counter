@@ -239,6 +239,13 @@ apply_runtime_roles() {
     bind_project_role "${project}" "${sa_email}" "roles/storage.objectAdmin"
   fi
 
+  # OCR — ocr_engine.py → Cloud Vision document_text_detection
+  bind_project_role "${project}" "${sa_email}" "roles/cloudvision.user"
+
+  info "Habilitando Cloud Vision API (requerida para OCR)..."
+  gcloud services enable vision.googleapis.com --project="${project}" --quiet 2>/dev/null || \
+    warn "No se pudo habilitar vision.googleapis.com (permisos insuficientes). Habilítala manualmente."
+
   # onemarketer-api: credenciales OAuth (Cloud Run --set-secrets o lectura directa)
   if [[ -n "${oauth_secret}" ]]; then
     bind_secret_accessor "${project}" "${oauth_secret}" "${sa_email}"
@@ -251,6 +258,7 @@ ${GREEN}Runtime SA configurada.${NC}
 Permisos aplicados según código Python:
   · GCS:     objectAdmin en bucket (upload/download/exists/metadata)
   · BQ:      jobUser (proyecto) + dataEditor (dataset)
+  · Vision:  cloudvision.user (OCR imágenes/PDF escaneados)
   · Secrets: secretAccessor (si se indicó OAUTH_SECRET)
 
 Adicional (fuera de este script, si usas Scheduler con OIDC):

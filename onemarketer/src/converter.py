@@ -120,26 +120,45 @@ def probe_audio(file_path: str) -> dict[str, Any] | None:
         return None
 
 
-def get_audio_bitrate(file_path: str) -> str | None:
-    cmd = [
-        "ffprobe",
-        "-v",
-        "error",
-        "-select_streams",
-        "a:0",
+def _bitrate_bps_to_kbps(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    value = raw.strip().upper()
+    if value in {"", "N/A", "NA", "UNKNOWN"}:
+        return None
+    try:
+        bitrate_bps = int(float(value))
+    except ValueError:
+        return None
+    if bitrate_bps <= 0:
+        return None
+    return f"{max(64, int(bitrate_bps / 1000))}k"
+
+
+def _ffprobe_bitrate_field(file_path: str, show_entries: str) -> str | None:
+    cmd = ["ffprobe", "-v", "error"]
+    if show_entries.startswith("stream="):
+        cmd.extend(["-select_streams", "a:0"])
+    cmd.extend([
         "-show_entries",
-        "stream=bit_rate",
+        show_entries,
         "-of",
         "default=noprint_wrappers=1:nokey=1",
         file_path,
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
-        bitrate_bps = int(result.stdout.strip())
-        return f"{max(64, int(bitrate_bps / 1000))}k"
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not detect bitrate for %s: %s", file_path, exc)
-        return None
+    ])
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=60)
+    return _bitrate_bps_to_kbps(result.stdout)
+
+
+def get_audio_bitrate(file_path: str) -> str | None:
+    for show_entries in ("stream=bit_rate", "format=bit_rate"):
+        try:
+            kbps = _ffprobe_bitrate_field(file_path, show_entries)
+            if kbps:
+                return kbps
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ffprobe %s for %s: %s", show_entries, file_path, exc)
+    return None
 
 
 def convert_with_ffmpeg(

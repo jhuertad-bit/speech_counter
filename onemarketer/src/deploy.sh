@@ -269,6 +269,7 @@ gcloud services enable cloudbuild.googleapis.com
 gcloud services enable logging.googleapis.com
 gcloud services enable run.googleapis.com
 gcloud services enable eventarc.googleapis.com
+gcloud services enable vision.googleapis.com
 
 # Crear dataset de BigQuery
 create_bigquery_dataset

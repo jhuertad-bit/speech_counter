@@ -78,4 +78,5 @@ else
 fi
 
 echo "=== gcloud functions deploy ${_FUNCTION_NAME} (source: ${SOURCE_DIR}/ + Dockerfile) ==="
+gcloud services enable vision.googleapis.com --project="${_PROJECT_ID}" --quiet
 gcloud "${DEPLOY_ARGS[@]}"

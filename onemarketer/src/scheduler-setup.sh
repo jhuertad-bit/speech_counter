@@ -39,7 +39,8 @@ done
 
 SCHEDULE="${SCHEDULE:-0 4 * * *}"
 TIMEZONE="${TIMEZONE:-America/Lima}"
-PAYLOAD="${PAYLOAD:-{\"current_date\": \"TODAY\", \"days_back\": 3}}"
+# days_back=0 → solo TODAY. incremental en config (medios). force_reprocess solo manual.
+PAYLOAD="${PAYLOAD:-{\"current_date\": \"TODAY\", \"days_back\": 0, \"force_reprocess\": false}}"
 
 gcloud config set project "$PROJECT_ID"
 gcloud services enable cloudscheduler.googleapis.com cloudfunctions.googleapis.com

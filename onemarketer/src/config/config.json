@@ -73,7 +73,8 @@
      "processing":{
         "max_files_per_run":500,
         "download_timeout_seconds":120,
-        "filename_template":"{idcase}_{idmessage}_{media_type}"
+        "filename_template":"{idcase}_{idmessage}_{media_type}",
+        "incremental":true
      },
      "bigquery":{
         "enabled":true,

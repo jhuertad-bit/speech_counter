@@ -87,6 +87,83 @@ def delete_partition(
             ).result()
 
 
+def load_media_keys_ok(
+    client: bigquery.Client,
+    table_ref: str,
+    fecha_evento: str,
+) -> dict[tuple[int, int], dict[str, Any]]:
+    """Claves (idcase, idmessage) ya descargadas con éxito para esa fecha."""
+    query = f"""
+        SELECT idcase, idmessage, gcs_uri, file_name, source_file_name, mime, waid
+        FROM `{table_ref}`
+        WHERE fecha_evento = @fecha_evento AND download_status = 'OK'
+    """
+    try:
+        rows = client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("fecha_evento", "DATE", fecha_evento),
+                ]
+            ),
+        ).result()
+    except Exception as exc:
+        err = str(exc).lower()
+        if "not found" in err or "404" in err:
+            return {}
+        raise
+
+    out: dict[tuple[int, int], dict[str, Any]] = {}
+    for row in rows:
+        if row.idcase is None or row.idmessage is None:
+            continue
+        key = (int(row.idcase), int(row.idmessage))
+        out[key] = {
+            "gcs_uri": row.gcs_uri,
+            "file_name": row.file_name,
+            "source_file_name": row.source_file_name,
+            "mime": row.mime,
+            "waid": row.waid,
+        }
+    return out
+
+
+def load_mp3_keys_done(
+    client: bigquery.Client,
+    table_ref: str,
+    fecha_evento: str,
+) -> set[tuple[int, int]]:
+    """Claves con MP3 ya registrado (éxito o skip válido)."""
+    query = f"""
+        SELECT idcase, idmessage
+        FROM `{table_ref}`
+        WHERE fecha_evento = @fecha_evento
+          AND conversion_status IN (
+            'OK', 'SKIPPED_EXISTS', 'SKIPPED_ALREADY_MP3'
+          )
+    """
+    try:
+        rows = client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("fecha_evento", "DATE", fecha_evento),
+                ]
+            ),
+        ).result()
+    except Exception as exc:
+        err = str(exc).lower()
+        if "not found" in err or "404" in err:
+            return set()
+        raise
+
+    return {
+        (int(row.idcase), int(row.idmessage))
+        for row in rows
+        if row.idcase is not None and row.idmessage is not None
+    }
+
+
 def insert_rows(
     client: bigquery.Client,
     dataset_id: str,

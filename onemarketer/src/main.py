@@ -35,7 +35,7 @@ def generate_date_list(current_date: str, days_back: int) -> List[str]:
     return dates
 
 
-def process_date(fecha: str) -> bool:
+def process_date(fecha: str, force_reprocess: bool = False) -> bool:
     """
     Procesa datos para una fecha específica
     
@@ -79,7 +79,10 @@ def process_date(fecha: str) -> bool:
             if "api" in media_cfg:
                 media_cfg["api"]["fechaini"] = fecha
             media_result = process_media_for_date(
-                fecha, config, chat_messages=chat_messages or None
+                fecha,
+                config,
+                chat_messages=chat_messages or None,
+                force_reprocess=force_reprocess,
             )
             if media_result.get("failed", 0) > 0:
                 print(f"⚠️  Descarga de medios con {media_result['failed']} error(es)")
@@ -126,6 +129,7 @@ def main(request, context=None):
         print(f"=== Fin de evento ===")
         current_date = event_data.get('current_date')
         days_back = event_data.get('days_back', 0)
+        force_reprocess = bool(event_data.get('force_reprocess', False))
         
         if not current_date:
             raise ValueError("El evento debe contener 'current_date' en formato YYYY-MM-DD")
@@ -151,6 +155,7 @@ def main(request, context=None):
         print(f"Días hacia atrás: {days_back}")
         print(f"Fechas a procesar: {len(dates_to_process)} días")
         print(f"Rango: {dates_to_process[-1]} a {dates_to_process[0]}")
+        print(f"Force reprocess: {force_reprocess}")
 
         runtime_config = load_config('config/config.json')
         print_runtime_gcp_info(runtime_config, service_label="onemarketer-etl")
@@ -164,7 +169,7 @@ def main(request, context=None):
         for i, fecha in enumerate(dates_to_process, 1):
             print(f"\n[{i}/{len(dates_to_process)}] Procesando fecha: {fecha}")
             
-            if process_date(fecha):
+            if process_date(fecha, force_reprocess=force_reprocess):
                 successful += 1
                 results.append({"fecha": fecha, "status": "success"})
             else:

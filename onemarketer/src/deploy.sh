@@ -183,7 +183,7 @@ GEN2="true"
 # Configuración del scheduler (valores por defecto)
 SCHEDULE="0 4 * * *"  # 4 AM todos los días
 TIMEZONE="America/Lima"
-PAYLOAD='{"current_date": "TODAY", "days_back": 3}'  # Procesa 3 días hacia atrás desde la fecha actual
+PAYLOAD='{"current_date": "TODAY", "days_back": 0, "force_reprocess": false}'  # force_reprocess=true solo reproceso manual
 # Por defecto, siempre crear/recrear el scheduler
 CREATE_SCHEDULER=true
 

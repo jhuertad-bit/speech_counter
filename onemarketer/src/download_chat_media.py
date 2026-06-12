@@ -26,7 +26,14 @@ from typing import Any
 import requests
 from google.cloud import bigquery, storage
 
-from bq_documentos import delete_partition, ensure_table, insert_rows, load_schema
+from bq_documentos import (
+    delete_partition,
+    ensure_table,
+    insert_rows,
+    load_media_keys_ok,
+    load_mp3_keys_done,
+    load_schema,
+)
 from extract_chats import load_config, parse_onemarketer_json_response
 from gcp_runtime_log import get_runtime_service_account_email
 from whatsapp_audio_mp3 import convert_whatsapp_audio_row
@@ -175,6 +182,22 @@ def _object_name(template: str, chat_line: dict[str, Any], media_type: str, exte
     return base
 
 
+def _parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
+    if not gcs_uri.startswith("gs://"):
+        raise ValueError(f"URI GCS inválida: {gcs_uri}")
+    rest = gcs_uri[5:]
+    bucket, _, blob = rest.partition("/")
+    return bucket, blob
+
+
+def _download_gcs_blob(gcp_config: dict[str, Any], gcs_uri: str, dest_path: str) -> int:
+    bucket_name, blob_name = _parse_gcs_uri(gcs_uri)
+    client = storage.Client(project=gcp_config["project_id"])
+    blob = client.bucket(bucket_name).blob(blob_name)
+    blob.download_to_filename(dest_path)
+    return os.path.getsize(dest_path)
+
+
 def _upload_blob(
     local_path: str,
     gcp_config: dict[str, Any],
@@ -211,6 +234,7 @@ def process_media_for_date(
     fecha_evento: str,
     config: dict[str, Any] | None = None,
     chat_messages: list[dict[str, Any]] | None = None,
+    force_reprocess: bool = False,
 ) -> dict[str, Any]:
     cfg = config or load_config("config/config.json")
     gcp_config = cfg.get("gcp", {})
@@ -243,7 +267,13 @@ def process_media_for_date(
         "{idcase}_{idmessage}_{media_type}",
     )
     match_chats_only = filter_cfg.get("match_reporte_chats_only", True)
+    incremental = processing_cfg.get("incremental", True) and not force_reprocess
     now = datetime.now().isoformat()
+
+    if force_reprocess:
+        print("[onemarketer-media] Modo force_reprocess: reemplaza partición del día en BQ")
+    elif incremental:
+        print("[onemarketer-media] Modo incremental: solo archivos nuevos + MP3 pendientes")
 
     media_lines: dict[tuple[int | None, int | None], dict[str, Any]] = {}
     if chat_messages is not None:
@@ -286,7 +316,26 @@ def process_media_for_date(
     mp3_converted = 0
     mp3_failed = 0
     skipped_no_match = 0
+    skipped_existing = 0
     mp3_enabled = mp3_cfg.get("enabled", False) and upload_gcs
+
+    existing_media: dict[tuple[int, int], dict[str, Any]] = {}
+    existing_mp3: set[tuple[int, int]] = set()
+    if incremental and upload_gcs:
+        project_id = gcp_config["project_id"]
+        dataset_id = gcp_config["dataset_id"]
+        doc_table = bq_cfg.get("table_id", "reporte_whatsapp_documento_raw")
+        doc_ref = f"{project_id}.{dataset_id}.{doc_table}"
+        bq_probe = bigquery.Client(project=project_id)
+        existing_media = load_media_keys_ok(bq_probe, doc_ref, fecha_evento)
+        if mp3_enabled:
+            mp3_table = mp3_cfg.get("bigquery", {}).get("table_id", "reporte_whatsapp_mp3")
+            mp3_ref = f"{project_id}.{dataset_id}.{mp3_table}"
+            existing_mp3 = load_mp3_keys_done(bq_probe, mp3_ref, fecha_evento)
+        print(
+            f"[onemarketer-media] Ya en BQ fecha={fecha_evento}: "
+            f"{len(existing_media)} docs OK, {len(existing_mp3)} mp3"
+        )
 
     for key in keys_to_process:
         if downloaded >= max_files:
@@ -325,6 +374,44 @@ def process_media_for_date(
 
         print(f"  [{media_type}] idcase={chat_line.get('idcase')} idmessage={idmessage}")
 
+        # Incremental: raw ya descargado → omitir HTTP; convertir MP3 si falta
+        if incremental and key in existing_media:
+            skipped_existing += 1
+            prior = existing_media[key]
+            print(f"    ⊘ ya descargado: {prior.get('gcs_uri')}")
+            if (
+                mp3_enabled
+                and media_type == "audio"
+                and key not in existing_mp3
+                and prior.get("gcs_uri")
+                and prior.get("file_name")
+            ):
+                try:
+                    with tempfile.TemporaryDirectory() as tmp:
+                        local_raw = os.path.join(tmp, prior["file_name"])
+                        _download_gcs_blob(gcp_config, prior["gcs_uri"], local_raw)
+                        mp3_row = convert_whatsapp_audio_row(
+                            local_source_path=local_raw,
+                            storage_file_name=prior["file_name"],
+                            source_file_name=prior.get("source_file_name") or prior["file_name"],
+                            source_gcs_uri=prior["gcs_uri"],
+                            gcp_config=gcp_config,
+                            mp3_cfg=mp3_cfg,
+                            fecha_evento=fecha_evento,
+                            chat_line=chat_line,
+                            mime=mime or prior.get("mime"),
+                            now=now,
+                            tmp_dir=tmp,
+                        )
+                        mp3_rows.append(mp3_row)
+                        if mp3_row.get("conversion_status") == "OK":
+                            mp3_converted += 1
+                        elif mp3_row.get("conversion_status") == "FAILED":
+                            mp3_failed += 1
+                except Exception as exc:
+                    print(f"    [mp3] ✗ desde GCS existente: {exc}")
+            continue
+
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 temp_path = os.path.join(tmp, str(idmessage))
@@ -358,7 +445,7 @@ def process_media_for_date(
                 base_row["download_status"] = "OK"
                 downloaded += 1
 
-                if mp3_enabled and media_type == "audio":
+                if mp3_enabled and media_type == "audio" and key not in existing_mp3:
                     mp3_row = convert_whatsapp_audio_row(
                         local_source_path=final_path,
                         storage_file_name=storage_file_name,
@@ -394,9 +481,11 @@ def process_media_for_date(
         bq_client = bigquery.Client(project=project_id)
         schema = load_schema(table_id)
         table_ref = ensure_table(bq_client, project_id, dataset_id, table_id, schema, partition_field)
-        delete_partition(bq_client, table_ref, fecha_evento, partition_field)
+        if force_reprocess:
+            delete_partition(bq_client, table_ref, fecha_evento, partition_field)
         insert_rows(bq_client, dataset_id, table_id, bq_rows)
-        print(f"BigQuery: {len(bq_rows)} filas en {table_ref}")
+        mode = "reemplazo" if force_reprocess else "append"
+        print(f"BigQuery ({mode}): {len(bq_rows)} filas nuevas en {table_ref}")
 
     mp3_bq_cfg = mp3_cfg.get("bigquery", {})
     if mp3_enabled and mp3_bq_cfg.get("enabled", True) and mp3_rows:
@@ -410,9 +499,11 @@ def process_media_for_date(
         mp3_table_ref = ensure_table(
             bq_client, project_id, dataset_id, mp3_table_id, mp3_schema, mp3_partition_field
         )
-        delete_partition(bq_client, mp3_table_ref, fecha_evento, mp3_partition_field)
+        if force_reprocess:
+            delete_partition(bq_client, mp3_table_ref, fecha_evento, mp3_partition_field)
         insert_rows(bq_client, dataset_id, mp3_table_id, mp3_rows)
-        print(f"BigQuery MP3: {len(mp3_rows)} filas en {mp3_table_ref}")
+        mode = "reemplazo" if force_reprocess else "append"
+        print(f"BigQuery MP3 ({mode}): {len(mp3_rows)} filas nuevas en {mp3_table_ref}")
 
     summary = {
         "fecha_evento": fecha_evento,
@@ -420,7 +511,10 @@ def process_media_for_date(
         "download_api_urls": len(download_index),
         "matched_and_processed": len(keys_to_process),
         "downloaded": downloaded,
+        "skipped_existing": skipped_existing,
         "failed": failed,
+        "incremental": incremental,
+        "force_reprocess": force_reprocess,
         "mp3_rows": len(mp3_rows),
         "mp3_converted": mp3_converted,
         "mp3_failed": mp3_failed,
@@ -445,6 +539,11 @@ def main_cli() -> None:
         "--from-jsonl",
         help="JSONL de reporteChats para emparejar sin volver a extraer",
     )
+    parser.add_argument(
+        "--force-reprocess",
+        action="store_true",
+        help="Borra partición BQ del día y redescarga todo (desactiva incremental)",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -467,7 +566,12 @@ def main_cli() -> None:
                 if line:
                     chat_messages.append(json.loads(line))
 
-    result = process_media_for_date(args.fecha, config, chat_messages=chat_messages)
+    result = process_media_for_date(
+        args.fecha,
+        config,
+        chat_messages=chat_messages,
+        force_reprocess=args.force_reprocess,
+    )
     if result.get("failed", 0) > 0:
         sys.exit(1)
 

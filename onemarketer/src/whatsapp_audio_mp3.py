@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from chat_ids import resolve_chat_ids
 from converter import convert_audio_to_mp3, is_supported_audio, normalize_extension
 from gcs_paths import dated_subfolder_blob, resolve_gcs_base
 from google.cloud import storage
@@ -61,6 +62,7 @@ def convert_whatsapp_audio_row(
     now: str,
     tmp_dir: str,
     storage_gcs_path: str = "",
+    message_key: tuple[int | None, int | None] | None = None,
 ) -> dict[str, Any]:
     """
     Convierte un audio descargado a MP3, sube a GCS y devuelve fila para reporte_whatsapp_mp3.
@@ -69,12 +71,17 @@ def convert_whatsapp_audio_row(
     gcs_base = resolve_gcs_base(mp3_cfg, storage_gcs_path)
     subfolder = mp3_cfg.get("gcs_subfolder", "mp3")
     mp3_name = mp3_file_name(storage_file_name)
+    ids = resolve_chat_ids(
+        chat_line,
+        key=message_key,
+        file_name=storage_file_name or source_file_name,
+    )
 
     base_row: dict[str, Any] = {
         "fecha_evento": fecha_evento,
         "fecha_procesamiento": now,
-        "idcase": chat_line.get("idcase"),
-        "idmessage": chat_line.get("idmessage"),
+        "idcase": ids.get("idcase"),
+        "idmessage": ids.get("idmessage"),
         "waid": chat_line.get("waid"),
         "mime": mime,
         "source_gcs_uri": source_gcs_uri,

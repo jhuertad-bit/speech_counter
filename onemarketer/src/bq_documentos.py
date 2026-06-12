@@ -8,6 +8,8 @@ from typing import Any
 
 from google.cloud import bigquery
 
+from chat_ids import enrich_media_row
+
 
 def load_schema(table_name: str = "reporte_whatsapp_documento_raw") -> list[dict[str, Any]]:
     schema_path = os.path.join(os.path.dirname(__file__), "tablas", f"{table_name}.json")
@@ -116,17 +118,22 @@ def load_media_keys_ok(
 
     out: dict[tuple[int, int], dict[str, Any]] = {}
     for row in rows:
-        if row.idcase is None or row.idmessage is None:
+        enriched = enrich_media_row(
+            {
+                "idcase": row.idcase,
+                "idmessage": row.idmessage,
+                "gcs_uri": row.gcs_uri,
+                "file_name": row.file_name,
+                "source_file_name": row.source_file_name,
+                "mime": row.mime,
+                "waid": row.waid,
+                "media_type": row.media_type,
+            }
+        )
+        if enriched.get("idcase") is None or enriched.get("idmessage") is None:
             continue
-        key = (int(row.idcase), int(row.idmessage))
-        out[key] = {
-            "gcs_uri": row.gcs_uri,
-            "file_name": row.file_name,
-            "source_file_name": row.source_file_name,
-            "mime": row.mime,
-            "waid": row.waid,
-            "media_type": row.media_type,
-        }
+        key = (int(enriched["idcase"]), int(enriched["idmessage"]))
+        out[key] = enriched
     return out
 
 
@@ -191,9 +198,7 @@ def load_pending_mp3_audios(
 
     pending: list[dict[str, Any]] = []
     for row in rows:
-        if row.idcase is None or row.idmessage is None:
-            continue
-        pending.append(
+        enriched = enrich_media_row(
             {
                 "idcase": row.idcase,
                 "idmessage": row.idmessage,
@@ -205,6 +210,9 @@ def load_pending_mp3_audios(
                 "media_type": row.media_type,
             }
         )
+        if enriched.get("idcase") is None or enriched.get("idmessage") is None:
+            continue
+        pending.append(enriched)
     return pending
 
 

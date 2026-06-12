@@ -43,6 +43,7 @@ from bq_documentos import (
     load_schema,
     update_documento_raw_storage,
 )
+from chat_ids import resolve_chat_ids
 from extract_chats import load_config, parse_onemarketer_json_response
 from gcp_runtime_log import get_runtime_service_account_email
 from converter import VIDEO_AUDIO_EXTENSIONS, is_video_audio_container
@@ -80,12 +81,8 @@ def _matches_patterns(value: str | None, patterns: list[str]) -> bool:
 
 
 def message_key(record: dict[str, Any]) -> tuple[int | None, int | None]:
-    idcase = record.get("idcase")
-    idmessage = record.get("idmessage")
-    try:
-        return (int(idcase) if idcase is not None else None, int(idmessage) if idmessage is not None else None)
-    except (TypeError, ValueError):
-        return (None, None)
+    resolved = resolve_chat_ids(record, file_name=record.get("file_name"))
+    return resolved.get("idcase"), resolved.get("idmessage")
 
 
 def is_media_chat_line(message: dict[str, Any], filter_cfg: dict[str, Any]) -> bool:
@@ -179,12 +176,11 @@ def _convert_mp3_from_gcs_row(
     storage_gcs_path: str,
     mime: str | None,
     now: str,
+    message_key: tuple[int | None, int | None] | None = None,
 ) -> dict[str, Any]:
-    chat_line = {
-        "idcase": prior.get("idcase"),
-        "idmessage": prior.get("idmessage"),
-        "waid": prior.get("waid"),
-    }
+    file_name = prior.get("file_name") or prior.get("source_file_name")
+    chat_line = resolve_chat_ids(prior, key=message_key, file_name=file_name)
+    chat_line["waid"] = prior.get("waid")
     with tempfile.TemporaryDirectory() as tmp:
         local_raw = os.path.join(tmp, prior["file_name"])
         _download_gcs_blob(gcp_config, prior["gcs_uri"], local_raw)
@@ -201,6 +197,7 @@ def _convert_mp3_from_gcs_row(
             now=now,
             tmp_dir=tmp,
             storage_gcs_path=storage_gcs_path,
+            message_key=message_key,
         )
 
 
@@ -255,6 +252,7 @@ def _backfill_pending_mp3(
                 storage_gcs_path=storage_gcs_path,
                 mime=row.get("mime"),
                 now=now,
+                message_key=key,
             )
             mp3_rows.append(mp3_row)
             queued_keys.add(key)
@@ -559,8 +557,9 @@ def download_to_path(url: str, dest_path: str, timeout: int) -> tuple[str, int]:
 
 
 def _object_name(template: str, chat_line: dict[str, Any], media_type: str, extension: str) -> str:
-    idcase = str(chat_line.get("idcase", "unknown"))
-    idmessage = str(chat_line.get("idmessage", "unknown"))
+    resolved = resolve_chat_ids(chat_line)
+    idcase = str(resolved.get("idcase") or "unknown")
+    idmessage = str(resolved.get("idmessage") or "unknown")
     base = template.format(idcase=idcase, idmessage=idmessage, media_type=media_type)
     if extension and not extension.startswith("."):
         extension = f".{extension}"
@@ -992,21 +991,27 @@ def process_media_for_date(
             break
 
         dl_record = download_index[key]
-        chat_line = media_lines.get(key, dl_record)
+        chat_line = resolve_chat_ids(
+            media_lines.get(key, {}),
+            dl_record,
+            key=key,
+        )
+        chat_line["waid"] = chat_line.get("waid") or dl_record.get("waid") or media_lines.get(key, {}).get("waid")
         download_url = (dl_record.get("download") or "").strip()
         if not download_url:
             skipped_no_match += 1
             continue
 
-        mime = chat_line.get("mime") or dl_record.get("mime")
+        mime = chat_line.get("mime") or dl_record.get("mime") or media_lines.get(key, {}).get("mime")
         tipo = dl_record.get("tipo_objeto") or dl_record.get("tipo")
         media_type = resolve_media_type(mime, tipo)
+        idcase = chat_line.get("idcase")
         idmessage = chat_line.get("idmessage")
 
         base_row: dict[str, Any] = {
             "fecha_evento": fecha_evento,
             "fecha_procesamiento": now,
-            "idcase": chat_line.get("idcase"),
+            "idcase": idcase,
             "idmessage": idmessage,
             "waid": chat_line.get("waid"),
             "mime": mime,
@@ -1021,7 +1026,7 @@ def process_media_for_date(
             "error_message": None,
         }
 
-        print(f"  [{media_type}] idcase={chat_line.get('idcase')} idmessage={idmessage}")
+        print(f"  [{media_type}] idcase={idcase} idmessage={idmessage}")
 
         # Incremental: raw ya descargado → omitir HTTP; convertir MP3 si falta
         if incremental and key in existing_media:
@@ -1051,6 +1056,7 @@ def process_media_for_date(
                         storage_gcs_path=gcs_path,
                         mime=mime or prior.get("mime"),
                         now=now,
+                        message_key=key,
                     )
                     mp3_rows.append(mp3_row)
                     if mp3_row.get("conversion_status") == "OK":
@@ -1260,6 +1266,7 @@ def process_media_for_date(
                         now=now,
                         tmp_dir=tmp,
                         storage_gcs_path=gcs_path,
+                        message_key=key,
                     )
                     mp3_rows.append(mp3_row)
                     if mp3_row.get("conversion_status") == "OK":

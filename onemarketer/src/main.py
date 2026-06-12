@@ -8,10 +8,25 @@ Recibe día actual y cantidad de días hacia atrás para reprocesar
 import json
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
+from zoneinfo import ZoneInfo
+
+PROCESS_TIMEZONE = "America/Lima"
 
 # Importar funciones directamente de extract_chats.py
 from extract_chats import load_config, process_table, print_runtime_gcp_info
 from download_chat_media import process_media_for_date
+
+
+def resolve_current_date(current_date: str) -> str:
+    """Resuelve TODAY/YESTERDAY en America/Lima o valida YYYY-MM-DD."""
+    today = datetime.now(ZoneInfo(PROCESS_TIMEZONE)).date()
+    key = current_date.upper()
+    if key == "TODAY":
+        return today.strftime("%Y-%m-%d")
+    if key == "YESTERDAY":
+        return (today - timedelta(days=1)).strftime("%Y-%m-%d")
+    datetime.strptime(current_date, "%Y-%m-%d")
+    return current_date
 
 
 def generate_date_list(current_date: str, days_back: int) -> List[str]:
@@ -134,14 +149,13 @@ def main(request, context=None):
         if not current_date:
             raise ValueError("El evento debe contener 'current_date' en formato YYYY-MM-DD")
         
-        # Validar formato de fecha
+        # Validar formato de fecha (TODAY/YESTERDAY en America/Lima o YYYY-MM-DD)
         try:
-            if current_date.upper() == 'TODAY':
-                current_date = datetime.now().strftime('%Y-%m-%d')
-            else:
-                datetime.strptime(current_date, '%Y-%m-%d')
+            current_date = resolve_current_date(current_date)
         except ValueError:
-            raise ValueError(f"Formato de fecha inválido. Use YYYY-MM-DD. Recibido: {current_date}")
+            raise ValueError(
+                f"Formato de fecha inválido. Use YYYY-MM-DD, TODAY o YESTERDAY. Recibido: {current_date}"
+            )
         
         # Validar days_back
         if not isinstance(days_back, int) or days_back < 0:

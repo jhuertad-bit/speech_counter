@@ -39,8 +39,8 @@ done
 
 SCHEDULE="${SCHEDULE:-0 4 * * *}"
 TIMEZONE="${TIMEZONE:-America/Lima}"
-# days_back=0 → solo TODAY. incremental en config (medios). force_reprocess solo manual.
-PAYLOAD="${PAYLOAD:-{\"current_date\": \"TODAY\", \"days_back\": 0, \"force_reprocess\": false}}"
+# YESTERDAY + days_back=0 → día anterior (job 4am Lima procesa el día cerrado). force_reprocess solo manual.
+PAYLOAD="${PAYLOAD:-{\"current_date\": \"YESTERDAY\", \"days_back\": 0, \"force_reprocess\": false}}"
 
 gcloud config set project "$PROJECT_ID"
 gcloud services enable cloudscheduler.googleapis.com cloudfunctions.googleapis.com

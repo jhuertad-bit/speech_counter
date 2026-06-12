@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Deploy Cloud Function Gen2 (GCS trigger) con imagen custom (ffmpeg).
+# Deploy Cloud Function Gen2 (GCS trigger) con Dockerfile (ffmpeg).
+# Nota: gcloud functions deploy NO soporta --image; usa --source + Dockerfile.
 set -euo pipefail
 
 missing=0
@@ -26,23 +27,23 @@ fi
 
 LOCATION="${_LOCATION:-us-central1}"
 REPO_NAME="${_REPO_NAME:-gcf-artifacts}"
-IMAGE_NAME="${_IMAGE_NAME:-audio-to-mp3}"
-COMMIT_SHA="${COMMIT_SHA:-latest}"
+RUNTIME="${_RUNTIME:-python310}"
 CONFIG_PATH="${_CONFIG_PATH:-config/config.json}"
 MEMORY="${_MEMORY:-6144MB}"
 TIMEOUT="${_TIMEOUT:-540s}"
 MAX_INSTANCES="${_MAX_INSTANCES:-30}"
 CONCURRENCY="${_CONCURRENCY:-1}"
+SOURCE_DIR="${_SOURCE_DIR:-audio_to_mp3}"
 
-IMAGE="${LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${COMMIT_SHA}"
-
-echo "=== gcloud functions deploy ${_FUNCTION_NAME} (imagen: ${IMAGE}) ==="
+echo "=== gcloud functions deploy ${_FUNCTION_NAME} (source: ${SOURCE_DIR}/ + Dockerfile) ==="
 gcloud functions deploy "${_FUNCTION_NAME}" \
   --gen2 \
   --project="${_PROJECT_ID}" \
   --region="${LOCATION}" \
-  --image="${IMAGE}" \
+  --runtime="${RUNTIME}" \
+  --source="${SOURCE_DIR}" \
   --entry-point=audio_to_mp3_converter \
+  --docker-repository="${LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${REPO_NAME}" \
   --trigger-event-filters="type=google.cloud.storage.object.v1.finalized" \
   --trigger-event-filters="bucket=${_BUCKET_NAME}" \
   --trigger-location="${LOCATION}" \

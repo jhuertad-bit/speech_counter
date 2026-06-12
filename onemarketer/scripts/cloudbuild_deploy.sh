@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Deploy Cloud Function Gen2 desde imagen Docker (ffmpeg + ETL OneMarketer).
+# Deploy Cloud Function Gen2 con Dockerfile (ffmpeg + ETL OneMarketer).
+# Nota: gcloud functions deploy NO soporta --image; usa --source + Dockerfile.
 set -euo pipefail
 
 missing=0
@@ -33,17 +34,16 @@ fi
 
 LOCATION="${_LOCATION:-us-central1}"
 REPO_NAME="${_REPO_NAME:-gcf-artifacts}"
-IMAGE_NAME="${_IMAGE_NAME:-onemarketer-etl}"
-COMMIT_SHA="${COMMIT_SHA:-latest}"
 ENTRY_POINT="${_ENTRY_POINT:-main}"
+RUNTIME="${_RUNTIME:-python310}"
 MEMORY="${_MEMORY:-2Gi}"
 TIMEOUT="${_TIMEOUT:-3600s}"
 CPU="${_CPU:-2}"
 MAX_INSTANCES="${_MAX_INSTANCES:-3}"
 CONCURRENCY="${_CONCURRENCY:-1}"
 ALLOW_UNAUTH="${_ALLOW_UNAUTHENTICATED:-false}"
+SOURCE_DIR="${_SOURCE_DIR:-onemarketer}"
 
-IMAGE="${LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}:${COMMIT_SHA}"
 ENV_VARS="GCP_PROJECT_ID=${_PROJECT_ID},GCP_BUCKET_NAME=${_BUCKET_NAME},GCP_DATASET_ID=${_DATASET_ID},GCP_REGION=${LOCATION},GCP_FUNCTION_NAME=${_FUNCTION_NAME},GCP_SCHEDULER_NAME=${_SCHEDULER_NAME},GCP_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}"
 
 DEPLOY_ARGS=(
@@ -51,7 +51,8 @@ DEPLOY_ARGS=(
   --gen2
   --project="${_PROJECT_ID}"
   --region="${LOCATION}"
-  --image="${IMAGE}"
+  --runtime="${RUNTIME}"
+  --source="${SOURCE_DIR}"
   --entry-point="${ENTRY_POINT}"
   --trigger-http
   --memory="${MEMORY}"
@@ -63,6 +64,12 @@ DEPLOY_ARGS=(
   --set-env-vars="${ENV_VARS}"
 )
 
+if [[ -n "${REPO_NAME}" ]]; then
+  DEPLOY_ARGS+=(
+    "--docker-repository=${LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${REPO_NAME}"
+  )
+fi
+
 if [[ "${ALLOW_UNAUTH}" == "true" ]]; then
   echo "Modo público: --allow-unauthenticated"
   DEPLOY_ARGS+=(--allow-unauthenticated)
@@ -70,5 +77,5 @@ else
   echo "Modo autenticado: Scheduler con OIDC (ver scheduler-setup.sh)"
 fi
 
-echo "=== gcloud functions deploy ${_FUNCTION_NAME} (imagen: ${IMAGE}) ==="
+echo "=== gcloud functions deploy ${_FUNCTION_NAME} (source: ${SOURCE_DIR}/ + Dockerfile) ==="
 gcloud "${DEPLOY_ARGS[@]}"

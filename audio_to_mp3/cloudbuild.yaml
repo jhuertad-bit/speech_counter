@@ -1,13 +1,13 @@
-# Pipeline: Cloud Functions Gen2 (GCS → audio_to_mp3) con imagen Docker (ffmpeg).
+# Pipeline: Cloud Functions Gen2 (GCS → audio_to_mp3) con Dockerfile (ffmpeg).
 #
 # Variables en ACTIVADOR → Variables de sustitución:
 #   Obligatorias: _PROJECT_ID, _FUNCTION_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME
 #   Opcionales:   _LOCATION, _CONFIG_PATH, _MEMORY, _TIMEOUT, _MAX_INSTANCES,
-#                 _CONCURRENCY, _REPO_NAME, _IMAGE_NAME
+#                 _CONCURRENCY, _REPO_NAME, _RUNTIME
 substitutions:
   _LOCATION: 'us-central1'
   _REPO_NAME: 'gcf-artifacts'
-  _IMAGE_NAME: 'audio-to-mp3'
+  _RUNTIME: 'python310'
   _CONFIG_PATH: 'config/config.json'
   _MEMORY: '6144MB'
   _TIMEOUT: '540s'
@@ -15,37 +15,24 @@ substitutions:
   _CONCURRENCY: '1'
 
 steps:
-  - name: 'gcr.io/cloud-builders/docker'
-    dir: 'audio_to_mp3'
-    args:
-      - 'build'
-      - '-t'
-      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-      - '.'
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: bash
     args:
       - 'audio_to_mp3/scripts/cloudbuild_deploy.sh'
     env:
-      - 'COMMIT_SHA=$COMMIT_SHA'
       - '_PROJECT_ID=${_PROJECT_ID}'
       - '_FUNCTION_NAME=${_FUNCTION_NAME}'
       - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
       - '_BUCKET_NAME=${_BUCKET_NAME}'
       - '_LOCATION=${_LOCATION}'
       - '_REPO_NAME=${_REPO_NAME}'
-      - '_IMAGE_NAME=${_IMAGE_NAME}'
+      - '_RUNTIME=${_RUNTIME}'
       - '_CONFIG_PATH=${_CONFIG_PATH}'
       - '_MEMORY=${_MEMORY}'
       - '_TIMEOUT=${_TIMEOUT}'
       - '_MAX_INSTANCES=${_MAX_INSTANCES}'
       - '_CONCURRENCY=${_CONCURRENCY}'
+      - '_SOURCE_DIR=audio_to_mp3'
 
 options:
   logging: CLOUD_LOGGING_ONLY

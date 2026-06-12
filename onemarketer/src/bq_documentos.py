@@ -94,7 +94,8 @@ def load_media_keys_ok(
 ) -> dict[tuple[int, int], dict[str, Any]]:
     """Claves (idcase, idmessage) ya descargadas con éxito para esa fecha."""
     query = f"""
-        SELECT idcase, idmessage, gcs_uri, file_name, source_file_name, mime, waid
+        SELECT
+            idcase, idmessage, gcs_uri, file_name, source_file_name, mime, waid, media_type
         FROM `{table_ref}`
         WHERE fecha_evento = @fecha_evento AND download_status = 'OK'
     """
@@ -124,8 +125,87 @@ def load_media_keys_ok(
             "source_file_name": row.source_file_name,
             "mime": row.mime,
             "waid": row.waid,
+            "media_type": row.media_type,
         }
     return out
+
+
+def load_pending_mp3_audios(
+    client: bigquery.Client,
+    doc_table_ref: str,
+    mp3_table_ref: str,
+    fecha_evento: str,
+) -> list[dict[str, Any]]:
+    """Audios OK en documento_raw sin registro MP3 terminado."""
+    query = f"""
+        SELECT
+            d.idcase,
+            d.idmessage,
+            d.gcs_uri,
+            d.file_name,
+            d.source_file_name,
+            d.mime,
+            d.waid,
+            d.media_type
+        FROM `{doc_table_ref}` d
+        WHERE d.fecha_evento = @fecha_evento
+          AND d.download_status = 'OK'
+          AND d.gcs_uri IS NOT NULL
+          AND d.file_name IS NOT NULL
+          AND (
+            LOWER(IFNULL(d.media_type, '')) = 'audio'
+            OR REGEXP_CONTAINS(
+              LOWER(IFNULL(d.file_name, '')),
+              r'\\.(ogg|opus|m4a|amr|wav|flac|aac|webm|caf|aiff|aif|mp3)$'
+            )
+            OR REGEXP_CONTAINS(
+              LOWER(IFNULL(d.mime, '')),
+              r'audio|ogg|opus|ptt|voice|amr'
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM `{mp3_table_ref}` m
+            WHERE m.fecha_evento = d.fecha_evento
+              AND m.idcase = d.idcase
+              AND m.idmessage = d.idmessage
+              AND m.conversion_status IN (
+                'OK', 'SKIPPED_EXISTS', 'SKIPPED_ALREADY_MP3'
+              )
+          )
+    """
+    try:
+        rows = client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("fecha_evento", "DATE", fecha_evento),
+                ]
+            ),
+        ).result()
+    except Exception as exc:
+        err = str(exc).lower()
+        if "not found" in err or "404" in err:
+            return []
+        raise
+
+    pending: list[dict[str, Any]] = []
+    for row in rows:
+        if row.idcase is None or row.idmessage is None:
+            continue
+        pending.append(
+            {
+                "idcase": row.idcase,
+                "idmessage": row.idmessage,
+                "gcs_uri": row.gcs_uri,
+                "file_name": row.file_name,
+                "source_file_name": row.source_file_name,
+                "mime": row.mime,
+                "waid": row.waid,
+                "media_type": row.media_type,
+            }
+        )
+    return pending
 
 
 def load_mp3_keys_done(

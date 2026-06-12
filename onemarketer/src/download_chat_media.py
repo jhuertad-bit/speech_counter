@@ -17,6 +17,7 @@ import argparse
 import json
 import mimetypes
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -32,6 +33,7 @@ from bq_documentos import (
     insert_rows,
     load_media_keys_ok,
     load_mp3_keys_done,
+    load_pending_mp3_audios,
     load_schema,
 )
 from extract_chats import load_config, parse_onemarketer_json_response
@@ -94,6 +96,12 @@ def is_media_chat_line(message: dict[str, Any], filter_cfg: dict[str, Any]) -> b
     return False
 
 
+AUDIO_EXTENSIONS = {
+    ".ogg", ".opus", ".wav", ".wave", ".flac", ".m4a", ".aac",
+    ".wma", ".amr", ".3gp", ".mp4", ".webm", ".aiff", ".aif", ".caf", ".mp2", ".mp3",
+}
+
+
 def resolve_media_type(mime: str | None, tipo_objeto: str | None = None) -> str:
     combined = f"{mime or ''} {tipo_objeto or ''}".lower()
     if any(p in combined for p in ("audio", "ogg", "opus", "ptt", "voice", "mpeg", "amr")):
@@ -105,6 +113,124 @@ def resolve_media_type(mime: str | None, tipo_objeto: str | None = None) -> str:
     if any(p in combined for p in ("pdf", "document", "application")):
         return "document"
     return "unknown"
+
+
+def is_audio_for_mp3(
+    mime: str | None,
+    tipo: str | None = None,
+    file_name: str | None = None,
+    media_type: str | None = None,
+    filter_cfg: dict[str, Any] | None = None,
+) -> bool:
+    """True si el archivo debe convertirse a MP3 (mime, extensión o media_type)."""
+    if media_type == "audio" or resolve_media_type(mime, tipo) == "audio":
+        return True
+    if file_name:
+        _, ext = os.path.splitext(file_name.lower())
+        if ext in AUDIO_EXTENSIONS:
+            return True
+    if filter_cfg and _matches_patterns(mime, filter_cfg.get("mime_audio_patterns", [])):
+        return True
+    return False
+
+
+def _ffmpeg_available() -> bool:
+    return shutil.which("ffmpeg") is not None
+
+
+def _convert_mp3_from_gcs_row(
+    prior: dict[str, Any],
+    *,
+    gcp_config: dict[str, Any],
+    mp3_cfg: dict[str, Any],
+    fecha_evento: str,
+    mime: str | None,
+    now: str,
+) -> dict[str, Any]:
+    chat_line = {
+        "idcase": prior.get("idcase"),
+        "idmessage": prior.get("idmessage"),
+        "waid": prior.get("waid"),
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        local_raw = os.path.join(tmp, prior["file_name"])
+        _download_gcs_blob(gcp_config, prior["gcs_uri"], local_raw)
+        return convert_whatsapp_audio_row(
+            local_source_path=local_raw,
+            storage_file_name=prior["file_name"],
+            source_file_name=prior.get("source_file_name") or prior["file_name"],
+            source_gcs_uri=prior["gcs_uri"],
+            gcp_config=gcp_config,
+            mp3_cfg=mp3_cfg,
+            fecha_evento=fecha_evento,
+            chat_line=chat_line,
+            mime=mime or prior.get("mime"),
+            now=now,
+            tmp_dir=tmp,
+        )
+
+
+def _backfill_pending_mp3(
+    *,
+    fecha_evento: str,
+    gcp_config: dict[str, Any],
+    mp3_cfg: dict[str, Any],
+    bq_cfg: dict[str, Any],
+    mp3_bq_cfg: dict[str, Any],
+    now: str,
+    existing_mp3_keys: set[tuple[int, int]],
+    mp3_rows: list[dict[str, Any]],
+) -> tuple[int, int]:
+    """Convierte audios ya en documento_raw que aún no tienen fila MP3."""
+    project_id = gcp_config["project_id"]
+    dataset_id = gcp_config["dataset_id"]
+    doc_table = bq_cfg.get("table_id", "reporte_whatsapp_documento_raw")
+    mp3_table = mp3_bq_cfg.get("table_id", "reporte_whatsapp_mp3")
+    doc_ref = f"{project_id}.{dataset_id}.{doc_table}"
+    mp3_ref = f"{project_id}.{dataset_id}.{mp3_table}"
+
+    bq_client = bigquery.Client(project=project_id)
+    pending = load_pending_mp3_audios(bq_client, doc_ref, mp3_ref, fecha_evento)
+    if not pending:
+        return 0, 0
+
+    print(f"[mp3] Backfill: {len(pending)} audio(s) en documento_raw sin MP3")
+    converted = 0
+    failed = 0
+    queued_keys = {
+        (int(row["idcase"]), int(row["idmessage"]))
+        for row in mp3_rows
+        if row.get("idcase") is not None and row.get("idmessage") is not None
+    }
+
+    for row in pending:
+        key = (int(row["idcase"]), int(row["idmessage"]))
+        if key in existing_mp3_keys or key in queued_keys:
+            continue
+        print(
+            f"  [mp3 backfill] idcase={row['idcase']} idmessage={row['idmessage']} "
+            f"file={row.get('file_name')}"
+        )
+        try:
+            mp3_row = _convert_mp3_from_gcs_row(
+                row,
+                gcp_config=gcp_config,
+                mp3_cfg=mp3_cfg,
+                fecha_evento=fecha_evento,
+                mime=row.get("mime"),
+                now=now,
+            )
+            mp3_rows.append(mp3_row)
+            queued_keys.add(key)
+            if mp3_row.get("conversion_status") == "OK":
+                converted += 1
+            elif mp3_row.get("conversion_status") == "FAILED":
+                failed += 1
+        except Exception as exc:
+            failed += 1
+            print(f"    [mp3 backfill] ✗ {exc}")
+
+    return converted, failed
 
 
 def get_download_api(api_cfg: dict[str, Any], fechaini: str) -> dict[str, Any]:
@@ -275,6 +401,39 @@ def process_media_for_date(
     elif incremental:
         print("[onemarketer-media] Modo incremental: solo archivos nuevos + MP3 pendientes")
 
+    mp3_enabled = mp3_cfg.get("enabled", False) and upload_gcs
+    mp3_bq_cfg = mp3_cfg.get("bigquery", {})
+    if mp3_enabled:
+        ffmpeg_ok = _ffmpeg_available()
+        print(
+            f"[mp3] enabled=True | tabla={mp3_bq_cfg.get('table_id', 'reporte_whatsapp_mp3')} | "
+            f"gcs_path={mp3_cfg.get('gcs_path', '')} | ffmpeg={'OK' if ffmpeg_ok else 'NO ENCONTRADO'}"
+        )
+        if not ffmpeg_ok:
+            print(
+                "[mp3] ⚠️  Sin ffmpeg en runtime: la conversión fallará. "
+                "Redespliega con imagen Docker (cloudbuild_deploy.sh)."
+            )
+        if mp3_bq_cfg.get("enabled", True) and gcp_config.get("project_id") and gcp_config.get("dataset_id"):
+            mp3_table_id = mp3_bq_cfg.get("table_id", "reporte_whatsapp_mp3")
+            mp3_partition_field = mp3_bq_cfg.get("partition_field", "fecha_evento")
+            bq_boot = bigquery.Client(project=gcp_config["project_id"])
+            mp3_schema = load_schema(mp3_table_id)
+            ensure_table(
+                bq_boot,
+                gcp_config["project_id"],
+                gcp_config["dataset_id"],
+                mp3_table_id,
+                mp3_schema,
+                mp3_partition_field,
+            )
+            print(
+                f"[mp3] Tabla BQ asegurada: "
+                f"{gcp_config['project_id']}.{gcp_config['dataset_id']}.{mp3_table_id}"
+            )
+    else:
+        print("[mp3] enabled=False (audioToMp3 deshabilitado o upload_gcs=false)")
+
     media_lines: dict[tuple[int | None, int | None], dict[str, Any]] = {}
     if chat_messages is not None:
         for msg in chat_messages:
@@ -284,13 +443,38 @@ def process_media_for_date(
                     media_lines[key] = msg
         print(f"Líneas de conversación tipo archivo en reporteChats: {len(media_lines)}")
         if match_chats_only and not media_lines:
-            print("Sin líneas archivo; no se llama a descargachats.")
+            print("Sin líneas archivo nuevas; intentando solo backfill MP3 desde documento_raw.")
+            mp3_rows: list[dict[str, Any]] = []
+            mp3_converted = 0
+            mp3_failed = 0
+            if mp3_enabled and upload_gcs and not force_reprocess:
+                mp3_converted, mp3_failed = _backfill_pending_mp3(
+                    fecha_evento=fecha_evento,
+                    gcp_config=gcp_config,
+                    mp3_cfg=mp3_cfg,
+                    bq_cfg=bq_cfg,
+                    mp3_bq_cfg=mp3_bq_cfg,
+                    now=now,
+                    existing_mp3_keys=set(),
+                    mp3_rows=mp3_rows,
+                )
+            if mp3_enabled and mp3_bq_cfg.get("enabled", True) and mp3_rows:
+                project_id = gcp_config["project_id"]
+                dataset_id = gcp_config["dataset_id"]
+                mp3_table_id = mp3_bq_cfg.get("table_id", "reporte_whatsapp_mp3")
+                bq_client = bigquery.Client(project=project_id)
+                insert_rows(bq_client, dataset_id, mp3_table_id, mp3_rows)
+                print(f"BigQuery MP3 (append): {len(mp3_rows)} filas en {project_id}.{dataset_id}.{mp3_table_id}")
             return {
                 "fecha_evento": fecha_evento,
                 "media_chat_lines": 0,
                 "downloaded": 0,
                 "skipped": True,
                 "reason": "no_media_lines",
+                "mp3_enabled": mp3_enabled,
+                "mp3_rows": len(mp3_rows),
+                "mp3_converted": mp3_converted,
+                "mp3_failed": mp3_failed,
             }
     elif match_chats_only:
         print("match_reporte_chats_only=true pero no hay mensajes de reporteChats.")
@@ -317,7 +501,6 @@ def process_media_for_date(
     mp3_failed = 0
     skipped_no_match = 0
     skipped_existing = 0
-    mp3_enabled = mp3_cfg.get("enabled", False) and upload_gcs
 
     existing_media: dict[tuple[int, int], dict[str, Any]] = {}
     existing_mp3: set[tuple[int, int]] = set()
@@ -379,37 +562,38 @@ def process_media_for_date(
             skipped_existing += 1
             prior = existing_media[key]
             print(f"    ⊘ ya descargado: {prior.get('gcs_uri')}")
+            prior_audio = is_audio_for_mp3(
+                mime or prior.get("mime"),
+                tipo,
+                prior.get("file_name"),
+                prior.get("media_type") or media_type,
+                filter_cfg,
+            )
             if (
                 mp3_enabled
-                and media_type == "audio"
+                and prior_audio
                 and key not in existing_mp3
                 and prior.get("gcs_uri")
                 and prior.get("file_name")
             ):
                 try:
-                    with tempfile.TemporaryDirectory() as tmp:
-                        local_raw = os.path.join(tmp, prior["file_name"])
-                        _download_gcs_blob(gcp_config, prior["gcs_uri"], local_raw)
-                        mp3_row = convert_whatsapp_audio_row(
-                            local_source_path=local_raw,
-                            storage_file_name=prior["file_name"],
-                            source_file_name=prior.get("source_file_name") or prior["file_name"],
-                            source_gcs_uri=prior["gcs_uri"],
-                            gcp_config=gcp_config,
-                            mp3_cfg=mp3_cfg,
-                            fecha_evento=fecha_evento,
-                            chat_line=chat_line,
-                            mime=mime or prior.get("mime"),
-                            now=now,
-                            tmp_dir=tmp,
-                        )
-                        mp3_rows.append(mp3_row)
-                        if mp3_row.get("conversion_status") == "OK":
-                            mp3_converted += 1
-                        elif mp3_row.get("conversion_status") == "FAILED":
-                            mp3_failed += 1
+                    mp3_row = _convert_mp3_from_gcs_row(
+                        prior,
+                        gcp_config=gcp_config,
+                        mp3_cfg=mp3_cfg,
+                        fecha_evento=fecha_evento,
+                        mime=mime or prior.get("mime"),
+                        now=now,
+                    )
+                    mp3_rows.append(mp3_row)
+                    if mp3_row.get("conversion_status") == "OK":
+                        mp3_converted += 1
+                    elif mp3_row.get("conversion_status") == "FAILED":
+                        mp3_failed += 1
                 except Exception as exc:
                     print(f"    [mp3] ✗ desde GCS existente: {exc}")
+            elif mp3_enabled and prior_audio and key in existing_mp3:
+                print("    [mp3] ya registrado en BQ")
             continue
 
         try:
@@ -445,7 +629,10 @@ def process_media_for_date(
                 base_row["download_status"] = "OK"
                 downloaded += 1
 
-                if mp3_enabled and media_type == "audio" and key not in existing_mp3:
+                should_mp3 = is_audio_for_mp3(
+                    mime, tipo, storage_file_name, media_type, filter_cfg
+                )
+                if mp3_enabled and should_mp3 and key not in existing_mp3:
                     mp3_row = convert_whatsapp_audio_row(
                         local_source_path=final_path,
                         storage_file_name=storage_file_name,
@@ -472,6 +659,20 @@ def process_media_for_date(
 
         bq_rows.append(base_row)
 
+    if mp3_enabled and upload_gcs and not force_reprocess:
+        backfill_ok, backfill_fail = _backfill_pending_mp3(
+            fecha_evento=fecha_evento,
+            gcp_config=gcp_config,
+            mp3_cfg=mp3_cfg,
+            bq_cfg=bq_cfg,
+            mp3_bq_cfg=mp3_bq_cfg,
+            now=now,
+            existing_mp3_keys=existing_mp3,
+            mp3_rows=mp3_rows,
+        )
+        mp3_converted += backfill_ok
+        mp3_failed += backfill_fail
+
     if bq_cfg.get("enabled", True) and bq_rows and upload_gcs:
         project_id = gcp_config["project_id"]
         dataset_id = gcp_config["dataset_id"]
@@ -487,7 +688,6 @@ def process_media_for_date(
         mode = "reemplazo" if force_reprocess else "append"
         print(f"BigQuery ({mode}): {len(bq_rows)} filas nuevas en {table_ref}")
 
-    mp3_bq_cfg = mp3_cfg.get("bigquery", {})
     if mp3_enabled and mp3_bq_cfg.get("enabled", True) and mp3_rows:
         project_id = gcp_config["project_id"]
         dataset_id = gcp_config["dataset_id"]
@@ -515,9 +715,11 @@ def process_media_for_date(
         "failed": failed,
         "incremental": incremental,
         "force_reprocess": force_reprocess,
+        "mp3_enabled": mp3_enabled,
         "mp3_rows": len(mp3_rows),
         "mp3_converted": mp3_converted,
         "mp3_failed": mp3_failed,
+        "ffmpeg_available": _ffmpeg_available() if mp3_enabled else None,
         "bq_rows": len(bq_rows),
     }
     print(f"\nResumen medios: {summary}")

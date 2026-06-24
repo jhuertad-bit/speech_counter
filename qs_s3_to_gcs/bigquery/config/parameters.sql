@@ -1,0 +1,18 @@
+-- =============================================================================
+-- Parámetros qs_s3_to_gcs / QueeSmart (ajustar por ambiente)
+-- =============================================================================
+--
+-- PRD (actual):
+--   PROJECT_ID   = prd-utpbi-data-operation
+--   DATASET_RAW  = raw_queuesmart
+--   LOCATION     = us-central1
+--   GCS_BUCKET   = dev-utp-stg-queuesmart (us-central1)
+--
+-- Orden de despliegue BQ:
+--   1. bigquery/datasets/raw_queuesmart.sql
+--   2. bigquery/tables/hist_queesmart_mp3_catalog.sql
+--
+-- IAM Cloud Run Job (genesys-audio-processor@...):
+--   roles/bigquery.dataEditor  en raw_queuesmart
+--   roles/storage.objectAdmin  en bucket GCS destino
+--   roles/secretmanager.secretAccessor  en QueeSmartSecrets

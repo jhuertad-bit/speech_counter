@@ -7,6 +7,10 @@
 --   export BQ_CONNECTION='`dev-utpbi-data-operation.US.utp_gen_ia_process`'
 --   export GEMINI_MODEL='`dev-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`'  # sin comillas extra en el SQL final
 --   export EXTERNAL_TABLE_TMP='`dev-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`'
+--   export CRM_PROJECT=prd-utpbi-data-storage-pv
+--   export CRM_DATASET=raw_dynamic_crm
+--   # CRM en prod aunque PROJECT_ID sea dev (no hay leads en dev)
+--   # IAM: tu usuario o SA necesita bigquery.dataViewer en prd-utpbi-data-storage-pv.raw_dynamic_crm
 --
 --   for f in tables/*.sql views/*.sql procedures/*.sql; do
 --     sed -e "s|\${PROJECT_ID}|${PROJECT_ID}|g" \
@@ -15,5 +19,7 @@
 --         -e "s|\${BQ_CONNECTION}|${BQ_CONNECTION}|g" \
 --         -e "s|\${GEMINI_MODEL}|${GEMINI_MODEL}|g" \
 --         -e "s|\${EXTERNAL_TABLE_TMP}|${EXTERNAL_TABLE_TMP}|g" \
+--         -e "s|\${CRM_PROJECT}|${CRM_PROJECT}|g" \
+--         -e "s|\${CRM_DATASET}|${CRM_DATASET}|g" \
 --         "$f" | bq query --use_legacy_sql=false
 --   done

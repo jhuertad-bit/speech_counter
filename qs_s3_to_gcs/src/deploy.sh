@@ -55,6 +55,12 @@ GCP_ENV_VARS+=",AWS_REGION=us-east-1"
 if [[ -n "$AWS_ENDPOINT_URL" && "$AWS_ENDPOINT_URL" != "None" ]]; then
   GCP_ENV_VARS+=",AWS_ENDPOINT_URL=${AWS_ENDPOINT_URL}"
 fi
+if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+  GCP_ENV_VARS+=",AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}"
+  GCP_ENV_VARS+=",AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}"
+else
+  echo -e "${YELLOW}WARN: AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY no definidas — ver docs/aws-credentials-env-workaround.md${NC}"
+fi
 IMAGE="gcr.io/${PROJECT_ID}/${JOB_NAME}:latest"
 SCHEDULER_NAME="${JOB_NAME}-scheduler"
 

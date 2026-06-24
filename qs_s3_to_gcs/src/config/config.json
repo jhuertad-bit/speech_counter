@@ -38,7 +38,7 @@
     "catalog_existing_in_gcs": true
   },
   "secrets": {
-    "source": "secret_manager",
+    "source": "env",
     "secret_resource": "projects/596502577187/secrets/QueeSmartSecrets",
     "version": "latest",
     "aws_access_key_id_field": "aws_access_key_id",

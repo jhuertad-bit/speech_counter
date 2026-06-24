@@ -1,1 +1,3 @@
 /.idea/
+qs_s3_to_gcs/.env
+qs_s3_to_gcs/**/.env

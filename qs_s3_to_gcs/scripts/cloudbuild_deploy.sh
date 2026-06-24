@@ -6,19 +6,27 @@ missing=0
 require() {
   local name="$1"
   local value="$2"
+  local mask="${3:-false}"
   if [[ -z "${value}" ]]; then
     echo "ERROR: falta ${name} — agrégala en el activador de Cloud Build (Variables de sustitución)." >&2
     missing=1
   else
-    echo "OK ${name}=${value}"
+    if [[ "${mask}" == "true" ]]; then
+      echo "OK ${name}=***"
+    else
+      echo "OK ${name}=${value}"
+    fi
   fi
 }
 
 echo "=== Validando variables del activador ==="
 require "_PROJECT_ID" "${_PROJECT_ID:-}"
 require "_JOB_NAME" "${_JOB_NAME:-}"
+require "_SERVICE_ACCOUNT" "${_SERVICE_ACCOUNT:-}"
 require "_BUCKET_NAME" "${_BUCKET_NAME:-}"
 require "_DATASET_ID" "${_DATASET_ID:-}"
+require "_AWS_ACCESS_KEY_ID" "${_AWS_ACCESS_KEY_ID:-}"
+require "_AWS_SECRET_ACCESS_KEY" "${_AWS_SECRET_ACCESS_KEY:-}" "true"
 if [[ -n "${_SERVICE_ACCOUNT:-}" && "${_SERVICE_ACCOUNT}" != *"@"* ]]; then
   echo "ERROR: _SERVICE_ACCOUNT debe ser email completo (ej. nombre@${_PROJECT_ID}.iam.gserviceaccount.com), no '${_SERVICE_ACCOUNT}'" >&2
   missing=1
@@ -79,6 +87,8 @@ fi
 if [[ -n "${_AWS_ENDPOINT_URL:-}" ]]; then
   ENV_VARS+=",AWS_ENDPOINT_URL=${_AWS_ENDPOINT_URL}"
 fi
+ENV_VARS+=",AWS_ACCESS_KEY_ID=${_AWS_ACCESS_KEY_ID}"
+ENV_VARS+=",AWS_SECRET_ACCESS_KEY=${_AWS_SECRET_ACCESS_KEY}"
 
 ensure_gcs_bucket() {
   local bucket="$1"

@@ -113,21 +113,19 @@ gcloud run jobs execute prd-utpbi-s3-to-gcs-micro-batch \
   --update-env-vars=SYNC_MODE=daily_yesterday,SYNC_TARGET_DATE=2026-03-12
 ```
 
-### Credenciales AWS (Secret Manager)
+### Credenciales AWS (temporal: env vars)
 
-En `config/config.json` → `secrets`:
+Por permisos pendientes en Secret Manager, `secrets.source` está en **`env`**.
 
-```json
-"secrets": {
-  "source": "secret_manager",
-  "secret_resource": "projects/596502577187/secrets/QueeSmartSecrets",
-  "version": "latest",
-  "aws_access_key_id_field": "aws_access_key_id",
-  "aws_secret_access_key_field": "aws_secret_access_key"
-}
-```
+Configurar en el Cloud Run Job:
 
-La cuenta de servicio del Cloud Run Job necesita `roles/secretmanager.secretAccessor` sobre el secret y `roles/storage.objectAdmin` en el bucket GCS.
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
+Guía completa y pasos para volver a Secret Manager:
+**[docs/aws-credentials-env-workaround.md](../docs/aws-credentials-env-workaround.md)**
+
+> No guardar claves en el repo. Rotar en AWS si se expusieron fuera de Secret Manager.
 
 ## Variables de entorno (prioridad: env > config.json)
 
@@ -179,7 +177,7 @@ Igual que onemarketer: en Cloud Build / Cloud Run Job defines `GCP_*` y `AWS_*` 
 | `CONFIG_PATH` | Ruta al config dentro del contenedor (default `/app/config/config.json`) |
 | `PYTHONUNBUFFERED` | `1` — logs en tiempo real |
 
-### Cloud Build — sustituciones obligatorias
+### Cloud Build — sustituciones obligatorias (activador)
 
 ```
 _PROJECT_ID
@@ -187,9 +185,13 @@ _JOB_NAME
 _SERVICE_ACCOUNT
 _BUCKET_NAME
 _DATASET_ID
+_AWS_ACCESS_KEY_ID
+_AWS_SECRET_ACCESS_KEY
 ```
 
 Opcionales: `_AWS_S3_BUCKET`, `_AWS_ENDPOINT_URL`, `_GCP_DESTINATION_PREFIX`, `_SCHEDULER_NAME`, `_LOCATION`.
+
+Las `_AWS_*` del activador se inyectan en el Job como `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. Ver [docs/aws-credentials-env-workaround.md](../docs/aws-credentials-env-workaround.md).
 
 ## Despliegue
 

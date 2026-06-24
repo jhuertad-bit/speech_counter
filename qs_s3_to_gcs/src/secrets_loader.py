@@ -40,7 +40,11 @@ def load_aws_credentials(secrets_cfg: dict[str, Any]) -> tuple[str | None, str |
     if access_key and secret_key:
         return access_key, secret_key
 
-    if secrets_cfg.get("source") != "secret_manager":
+    source = (secrets_cfg.get("source") or "secret_manager").strip().lower()
+    if source == "env":
+        return access_key, secret_key
+
+    if source != "secret_manager":
         return access_key, secret_key
 
     resource = secrets_cfg.get("secret_resource", "").strip()

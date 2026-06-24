@@ -1,0 +1,17 @@
+[
+  {"name": "fecha_extraccion", "type": "DATE", "mode": "REQUIRED"},
+  {"name": "fecha_procesamiento", "type": "TIMESTAMP", "mode": "REQUIRED"},
+  {"name": "apellido_paterno", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "cliente_tipo", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "cliente_estado", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "cliente_url", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "asesor_nombre", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "asesor_usuario", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "asesor_codigo", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "transferido", "type": "INT64", "mode": "NULLABLE"},
+  {"name": "num_celular", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "enviado_sms", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "record_id", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "audio", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "audio_fecha", "type": "DATE", "mode": "NULLABLE"}
+]

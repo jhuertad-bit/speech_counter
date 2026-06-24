@@ -1,0 +1,51 @@
+# Pipeline: Cloud Run Job SQL Server → BigQuery (raw_queuesmart).
+#
+# Variables obligatorias en el activador:
+#   _PROJECT_ID, _JOB_NAME, _SERVICE_ACCOUNT, _DATASET_ID
+#   _SQL_SERVER_HOST, _SQL_SERVER_DATABASE, _SQL_SOURCE_TABLE
+#   _SQL_SERVER_USER, _SQL_SERVER_PASSWORD
+#
+# Opcionales:
+#   _SQL_SERVER_PORT (default 1433), _SQL_SERVER_SCHEMA (default dbo)
+#   _SQL_CUSTOM_QUERY, _SYNC_MODE, _LOCATION, _SOURCE_DIR
+substitutions:
+  _LOCATION: 'us-central1'
+  _SOURCE_DIR: 'qs_sql_to_bq/src'
+  _MEMORY: '512Mi'
+  _CPU: '1'
+  _TASK_TIMEOUT: '900s'
+  _MAX_RETRIES: '1'
+  _CONFIG_PATH: '/app/config/config.json'
+  _SQL_SERVER_PORT: '1433'
+  _SQL_SERVER_SCHEMA: 'dbo'
+
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - 'qs_sql_to_bq/scripts/cloudbuild_deploy.sh'
+    env:
+      - '_PROJECT_ID=${_PROJECT_ID}'
+      - '_JOB_NAME=${_JOB_NAME}'
+      - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '_DATASET_ID=${_DATASET_ID}'
+      - '_SCHEDULER_NAME=${_SCHEDULER_NAME}'
+      - '_SQL_SERVER_HOST=${_SQL_SERVER_HOST}'
+      - '_SQL_SERVER_PORT=${_SQL_SERVER_PORT}'
+      - '_SQL_SERVER_DATABASE=${_SQL_SERVER_DATABASE}'
+      - '_SQL_SERVER_SCHEMA=${_SQL_SERVER_SCHEMA}'
+      - '_SQL_SOURCE_TABLE=${_SQL_SOURCE_TABLE}'
+      - '_SQL_CUSTOM_QUERY=${_SQL_CUSTOM_QUERY}'
+      - '_SQL_SERVER_USER=${_SQL_SERVER_USER}'
+      - '_SQL_SERVER_PASSWORD=${_SQL_SERVER_PASSWORD}'
+      - '_SYNC_MODE=${_SYNC_MODE}'
+      - '_LOCATION=${_LOCATION}'
+      - '_SOURCE_DIR=${_SOURCE_DIR}'
+      - '_MEMORY=${_MEMORY}'
+      - '_CPU=${_CPU}'
+      - '_TASK_TIMEOUT=${_TASK_TIMEOUT}'
+      - '_MAX_RETRIES=${_MAX_RETRIES}'
+      - '_CONFIG_PATH=${_CONFIG_PATH}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

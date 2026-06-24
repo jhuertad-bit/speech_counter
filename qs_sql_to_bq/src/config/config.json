@@ -1,0 +1,59 @@
+{
+  "sql": {
+    "host": "",
+    "port": 1433,
+    "database": "",
+    "schema": "dbo",
+    "table": "",
+    "query": null,
+    "trust_server_certificate": true,
+    "login_timeout_seconds": 30,
+    "column_map": {
+      "doPaterno": "apellido_paterno",
+      "ClienteTipo": "cliente_tipo",
+      "ClienteEstado": "cliente_estado",
+      "ClienteURL": "cliente_url",
+      "AsesorNombre": "asesor_nombre",
+      "AsesorUsuario": "asesor_usuario",
+      "AsesorCodigo": "asesor_codigo",
+      "Transferido": "transferido",
+      "NumCelular": "num_celular",
+      "EnviadoSMS": "enviado_sms",
+      "RecordID": "record_id",
+      "Audio": "audio"
+    },
+    "audio_date_column": "Audio"
+  },
+  "gcp": {
+    "project_id": "dev-utpbi-data-operation",
+    "region": "us-central1",
+    "dataset_id": "raw_queuesmart",
+    "cloud_run_job_name": "dev-utpbi-sql-to-bq-queuesmart",
+    "service_account_email": "dev-utp-eduflow-sa@dev-utpbi-data-operation.iam.gserviceaccount.com",
+    "scheduler_name": "dev-utpbi-sql-to-bq-daily",
+    "schedule": "0 6 * * *",
+    "schedule_timezone": "America/Lima"
+  },
+  "sync": {
+    "mode": "daily_yesterday",
+    "timezone": "America/Lima",
+    "lookback_days": 15
+  },
+  "batch": {
+    "max_rows": 10000,
+    "insert_batch_size": 500
+  },
+  "bigquery": {
+    "enabled": true,
+    "dataset_id": "raw_queuesmart",
+    "table_id": "hist_queuesmart_ticketero_raw",
+    "location": "us-central1",
+    "partition_field": "fecha_extraccion",
+    "dedupe_by_record_id": true
+  },
+  "secrets": {
+    "source": "env",
+    "sql_user_env": "SQL_SERVER_USER",
+    "sql_password_env": "SQL_SERVER_PASSWORD"
+  }
+}

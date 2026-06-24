@@ -141,15 +141,17 @@ def copy_s3_object_to_gcs(
     gcs_bucket: str,
     gcs_key: str,
 ) -> int:
+    """Copia un archivo: descarga desde S3 y súbelo a GCS."""
     response = s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
+    data = response["Body"].read()
+    size = len(data) if data else int(response.get("ContentLength") or 0)
+    if size == 0:
+        raise ValueError("archivo vacío en S3")
+
     blob = gcs_client.bucket(gcs_bucket).blob(gcs_key)
     content_type = response.get("ContentType") or "audio/mpeg"
-    blob.upload_from_file(
-        response["Body"],
-        content_type=content_type,
-        rewind=True,
-    )
-    return int(response.get("ContentLength") or 0)
+    blob.upload_from_string(data, content_type=content_type)
+    return size
 
 
 def run_micro_batch(config: dict[str, Any]) -> SyncResult:
@@ -286,7 +288,7 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
                 f"({size} bytes, campus={parsed['campus']}, type={parsed['type_code']})"
             )
         except Exception as exc:  # noqa: BLE001
-            msg = f"{s3_key}: {exc}"
+            msg = f"{s3_key}: {type(exc).__name__}: {exc}"
             errors.append(msg)
             print(f"ERROR {msg}")
 

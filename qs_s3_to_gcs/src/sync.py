@@ -4,8 +4,9 @@ Micro-batch: copia audios S3 → GCS con carpetas por fecha del nombre de archiv
 Patrón esperado: AAABBB-YYYYMMDD-correlativo.mp3 (ej. 015AD1-20260217-123728.mp3)
 
 Modos (config sync.mode):
-  - backfill_all:      primera carga — todos los MP3, ordenados en GCS por fecha
-  - daily_yesterday:   scheduler — solo archivos cuya fecha en el nombre = ayer (America/Lima)
+  - backfill_all:       todos los MP3 históricos
+  - daily_last_n_days:  últimos N días (fecha en nombre), default N=15 — prueba
+  - daily_yesterday:    solo ayer (scheduler producción)
 """
 
 from __future__ import annotations
@@ -22,10 +23,12 @@ from google.cloud import storage
 from audio_paths import (
     DEFAULT_FILENAME_REGEX,
     basename_from_s3_key,
+    file_date_in_window,
+    format_date_window,
     gcs_key_for_audio,
     parse_audio_filename,
+    resolve_date_window,
     resolve_sync_mode,
-    resolve_target_date,
 )
 from bq_catalog import build_catalog_row, catalog_files
 from secrets_loader import load_aws_credentials
@@ -157,8 +160,8 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
     secrets_cfg = config.get("secrets", {})
 
     mode = resolve_sync_mode(sync_cfg)
-    target = resolve_target_date(sync_cfg, mode)
-    target_date_str = target.isoformat() if target else None
+    date_start, date_end = resolve_date_window(sync_cfg, mode)
+    target_date_str = format_date_window(date_start, date_end)
 
     filename_regex = sync_cfg.get("filename_regex", DEFAULT_FILENAME_REGEX)
     date_folder_format = sync_cfg.get("gcs_date_folder_format", "%Y-%m-%d")
@@ -181,7 +184,7 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
     watermark_before = prior_state.get("last_daily_date") or prior_state.get("last_modified_utc")
 
     print(
-        f"[sync] mode={mode} target_date={target_date_str or 'ALL'} "
+        f"[sync] mode={mode} date_window={target_date_str or 'ALL'} "
         f"prefix=s3://{s3_bucket}/{s3_prefix}"
     )
 
@@ -195,7 +198,7 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
         if not parsed:
             rejected_name += 1
             continue
-        if mode == "daily_yesterday" and target and parsed["file_date"] != target:
+        if not file_date_in_window(parsed["file_date"], date_start, date_end):
             rejected_date += 1
             continue
         item["parsed"] = parsed
@@ -311,8 +314,9 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
     new_state["already_in_gcs_last_run"] = already_in_gcs
     new_state["bq_inserted_last_run"] = bq_inserted
 
-    if mode == "daily_yesterday" and target and copied > 0:
-        new_state["last_daily_date"] = target.isoformat()
+    if mode in {"daily_yesterday", "daily_last_n_days"} and date_end and copied > 0:
+        new_state["last_daily_date"] = date_end.isoformat()
+        new_state["last_date_window"] = target_date_str
     if mode == "backfill_all" and copied == 0 and already_in_gcs > 0 and not errors:
         new_state["backfill_complete"] = True
 

@@ -19,7 +19,8 @@
     "schedule_timezone": "America/Lima"
   },
   "sync": {
-    "mode": "daily_yesterday",
+    "mode": "daily_last_n_days",
+    "lookback_days": 15,
     "timezone": "America/Lima",
     "filename_regex": "^(?P<campus>[A-Za-z0-9]{3})(?P<type_code>[A-Za-z0-9]{3})-(?P<file_date>\\d{8})-(?P<correlative>\\d+)\\.mp3$",
     "gcs_date_folder_format": "%Y-%m-%d",

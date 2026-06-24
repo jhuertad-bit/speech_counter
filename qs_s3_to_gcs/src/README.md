@@ -34,6 +34,7 @@ gs://dev-utp-stg-queuesmart/data/input/queuesmart_mp3/imported_from_s3/2026-02-1
 | Modo | Cuándo usar | Qué copia |
 |------|-------------|-----------|
 | `backfill_all` | Primera carga histórica | Todos los MP3 que coincidan con el patrón |
+| `daily_last_n_days` | Prueba / ventana reciente | Últimos **N** días hasta ayer (`lookback_days`, default 15) |
 | `daily_yesterday` | Scheduler diario | Solo archivos cuya fecha en el nombre = **ayer** (`America/Lima`) |
 
 En ambos modos, si el blob ya existe en GCS se omite (`skip_if_exists_in_gcs: true`).
@@ -82,11 +83,26 @@ Editar `config/config.json`:
 | `aws` | `bucket`, `prefix`, `region` | Origen S3 |
 | `gcp` | `bucket_name`, `destination_prefix` | Destino GCS |
 | `gcp` | `state_object` | Estado de corridas en GCS |
-| `sync` | `mode` | `backfill_all` o `daily_yesterday` |
+| `sync` | `mode` | `backfill_all`, `daily_last_n_days` o `daily_yesterday` |
+| `sync` | `lookback_days` | Días hacia atrás en modo prueba (default `15`) |
 | `sync` | `timezone` | Zona para calcular "ayer" (default `America/Lima`) |
 | `sync` | `filename_regex` | Regex del nombre MP3 |
 | `batch` | `max_files`, `max_total_mb` | Tope por ejecución |
 | `gcp` | `schedule` | Cron (default `0 5 * * *` = 05:00 diario Lima) |
+
+### Prueba — últimos 15 días
+
+Config actual: `"mode": "daily_last_n_days", "lookback_days": 15`.
+
+O por env sin redeploy:
+
+```bash
+gcloud run jobs execute dev-utpbi-s3-to-gcs-micro-batch \
+  --region=us-central1 \
+  --update-env-vars=SYNC_MODE=daily_last_n_days,SYNC_LOOKBACK_DAYS=15
+```
+
+Guía para volver a solo ayer: **[docs/sync-mode-switch.md](../docs/sync-mode-switch.md)**
 
 ### Primera carga (backfill)
 
@@ -167,7 +183,8 @@ Igual que onemarketer: en Cloud Build / Cloud Run Job defines `GCP_*` y `AWS_*` 
 
 | Variable | Mapea a | Descripción |
 |----------|---------|-------------|
-| `SYNC_MODE` | `sync.mode` | `backfill_all` o `daily_yesterday` |
+| `SYNC_MODE` | `sync.mode` | `backfill_all`, `daily_last_n_days` o `daily_yesterday` |
+| `SYNC_LOOKBACK_DAYS` | `sync.lookback_days` | Ventana en modo prueba (ej. `15`) |
 | `SYNC_TARGET_DATE` | `sync.target_date` | `YYYY-MM-DD` (reproceso manual) |
 
 ### Otras

@@ -40,23 +40,76 @@ def parse_audio_filename(file_name: str, pattern: str) -> dict[str, Any] | None:
 
 def resolve_sync_mode(sync_cfg: dict[str, Any]) -> str:
     mode = (sync_cfg.get("mode") or "daily_yesterday").strip().lower()
-    if mode not in {"backfill_all", "daily_yesterday"}:
-        raise ValueError(f"sync.mode inválido: {mode}")
+    valid = {"backfill_all", "daily_yesterday", "daily_last_n_days"}
+    if mode not in valid:
+        raise ValueError(f"sync.mode inválido: {mode} (válidos: {', '.join(sorted(valid))})")
     return mode
 
 
-def resolve_target_date(sync_cfg: dict[str, Any], mode: str) -> date | None:
-    """None en backfill_all; en daily_yesterday devuelve ayer (o SYNC_TARGET_DATE)."""
+def _lima_today(sync_cfg: dict[str, Any]) -> date:
+    tz_name = sync_cfg.get("timezone", "America/Lima")
+    return datetime.now(ZoneInfo(tz_name)).date()
+
+
+def resolve_lookback_days(sync_cfg: dict[str, Any]) -> int:
+    raw = sync_cfg.get("lookback_days", 15)
+    days = int(raw)
+    if days < 1:
+        raise ValueError("sync.lookback_days debe ser >= 1")
+    return days
+
+
+def resolve_date_window(sync_cfg: dict[str, Any], mode: str) -> tuple[date | None, date | None]:
+    """
+    Ventana de fechas (inclusive) según fecha en el nombre del archivo.
+
+    - backfill_all: sin filtro (None, None)
+    - daily_yesterday: solo ayer (o SYNC_TARGET_DATE)
+    - daily_last_n_days: desde ayer hacia atrás N días (default 15)
+    """
     if mode == "backfill_all":
-        return None
+        return None, None
 
     override = sync_cfg.get("target_date")
-    if override:
-        return datetime.strptime(str(override), "%Y-%m-%d").date()
+    if override and mode == "daily_yesterday":
+        d = datetime.strptime(str(override), "%Y-%m-%d").date()
+        return d, d
 
-    tz_name = sync_cfg.get("timezone", "America/Lima")
-    tz = ZoneInfo(tz_name)
-    return (datetime.now(tz) - timedelta(days=1)).date()
+    yesterday = _lima_today(sync_cfg) - timedelta(days=1)
+
+    if mode == "daily_yesterday":
+        return yesterday, yesterday
+
+    if mode == "daily_last_n_days":
+        lookback = resolve_lookback_days(sync_cfg)
+        start = yesterday - timedelta(days=lookback - 1)
+        return start, yesterday
+
+    return None, None
+
+
+def resolve_target_date(sync_cfg: dict[str, Any], mode: str) -> date | None:
+    """Compat: un solo día (daily_yesterday) o fin de ventana."""
+    start, end = resolve_date_window(sync_cfg, mode)
+    if start is None and end is None:
+        return None
+    return end
+
+
+def format_date_window(start: date | None, end: date | None) -> str | None:
+    if start is None or end is None:
+        return None
+    if start == end:
+        return start.isoformat()
+    return f"{start.isoformat()}..{end.isoformat()}"
+
+
+def file_date_in_window(file_date: date, start: date | None, end: date | None) -> bool:
+    if start is None and end is None:
+        return True
+    if start is None or end is None:
+        return False
+    return start <= file_date <= end
 
 
 def gcs_key_for_audio(

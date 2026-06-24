@@ -35,6 +35,7 @@ QS_S3_TO_GCS_BQ_ENV: dict[str, str] = {
 QS_S3_TO_GCS_SYNC_ENV: dict[str, str] = {
     "mode": "SYNC_MODE",
     "target_date": "SYNC_TARGET_DATE",
+    "lookback_days": "SYNC_LOOKBACK_DAYS",
 }
 
 QS_S3_TO_GCS_SECRETS_ENV: dict[str, str] = {
@@ -94,7 +95,10 @@ def apply_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
         f"  BQ dataset={bq.get('dataset_id', '')} | table={bq.get('table_id', '')} | "
         f"location={bq.get('location', '')}"
     )
-    print(f"  sync mode={cfg.get('sync', {}).get('mode', '')}")
+    print(
+        f"  sync mode={cfg.get('sync', {}).get('mode', '')} "
+        f"lookback_days={cfg.get('sync', {}).get('lookback_days', '')}"
+    )
 
     all_overrides = {
         **gcp_overrides,

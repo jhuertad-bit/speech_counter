@@ -46,6 +46,12 @@ SOURCE_DIR="${_SOURCE_DIR:-onemarketer/src}"
 
 ENV_VARS="GCP_PROJECT_ID=${_PROJECT_ID},GCP_BUCKET_NAME=${_BUCKET_NAME},GCP_DATASET_ID=${_DATASET_ID},GCP_REGION=${LOCATION},GCP_FUNCTION_NAME=${_FUNCTION_NAME},GCP_SCHEDULER_NAME=${_SCHEDULER_NAME},GCP_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}"
 
+# Prod: carpeta reportechats (minúsculas). Dev: omitir → config.json reporteChats.
+if [[ -n "${_GCS_PATH:-}" ]]; then
+  ENV_VARS="${ENV_VARS},GCP_GCS_PATH=${_GCS_PATH}"
+  echo "OK _GCS_PATH=${_GCS_PATH} → GCP_GCS_PATH"
+fi
+
 DEPLOY_ARGS=(
   functions deploy "${_FUNCTION_NAME}"
   --gen2

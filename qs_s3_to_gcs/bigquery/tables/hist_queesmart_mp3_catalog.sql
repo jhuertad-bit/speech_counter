@@ -1,10 +1,7 @@
--- Catálogo de audios QueeSmart (S3 → GCS). Reemplazar ${PROJECT_ID} y ${DATASET_RAW} al desplegar.
---
--- Ejemplo PRD:
---   PROJECT_ID  = prd-utpbi-data-operation
---   DATASET_RAW = raw_queuesmart
+-- Catálogo de audios QueeSmart (S3 → GCS) — PRODUCCIÓN
+-- Proyecto: prd-utpbi-data-operation | Dataset: raw_queuesmart (us-central1)
 
-CREATE TABLE IF NOT EXISTS `${PROJECT_ID}.${DATASET_RAW}.hist_queesmart_mp3_catalog` (
+CREATE TABLE IF NOT EXISTS `prd-utpbi-data-operation.raw_queuesmart.hist_queesmart_mp3_catalog` (
   fecha_audio DATE NOT NULL,
   fecha_procesamiento TIMESTAMP NOT NULL,
   file_name STRING NOT NULL,

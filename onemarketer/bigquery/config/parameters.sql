@@ -14,11 +14,15 @@
 --
 -- PRD (ejemplo, alinear con Genesys):
 --   PROJECT_ID          = prd-utpbi-data-operation
---   DATASET_RAW         = raw_onemarketer
---   DATASET_ANALYTICS   = adf_speech_analytics
+--   DATASET_RAW         = raw_onemarketer          (us-central1 — ETL)
+--   DATASET_ANALYTICS   = adf_speech_analytics     (US — Gen IA, igual que Genesys)
 --   BQ_CONNECTION         = `prd-utpbi-data-operation.US.utp_gen_ia_process`
 --   GEMINI_MODEL        = `prd-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`
 --   EXTERNAL_TABLE_TMP  = `prd-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`
+--
+-- ERROR COMÚN: crear el SP en raw_onemarketer (us-central1) y referenciar adf_speech_analytics.
+--   → "Dataset adf_speech_analytics was not found in location us-central1"
+-- Solución: SP + tablas hist en adf_speech_analytics (US). Ver deploy/prd_substitutions.sql
 --   CRM_PROJECT         = prd-utpbi-data-storage-pv
 --   CRM_DATASET         = raw_dynamic_crm
 --
@@ -31,11 +35,15 @@
 --   IAM dev: roles/bigquery.dataViewer en prd-utpbi-data-storage-pv.raw_dynamic_crm.leads
 --
 -- Fuente MP3 (ETL onemarketer):
---   raw_onemarketer.reporte_whatsapp_mp3  →  gcs_uri bajo getChats/{fecha}/mp3/
+--   raw_onemarketer.reporte_whatsapp_mp3  →  gcs_uri bajo getChats/{fecha}/media/
+--
+-- Ruta GCS base (JSONL + medios + MP3):
+--   DEV:  utp_pregrado_endpoint/reporteChats/services/getChats   (config.json default)
+--   PRD:  utp_pregrado_endpoint/reportechats/services/getChats  (activador: _GCS_PATH → GCP_GCS_PATH)
 --
 -- Orquestación sugerida:
---   Cloud Scheduler / ADF → CALL analytics.sp_onemarketer_whatsapp_gen_ia(DATE);
---   Ejecutar DESPUÉS del job onemarketer-etl del mismo día.
+--   Cloud Scheduler / ADF → CALL adf_speech_analytics.sp_onemarketer_whatsapp_gen_ia(DATE);
+--   Ejecutar DESPUÉS del job onemarketer-etl del mismo día (job en us-central1, SP en US).
 --
 -- IAM:
 --   SA del job BQ: cloudvision no aplica; necesita AI/Gemini + lectura GCS vía CONNECTION

@@ -2,11 +2,16 @@
 -- Stored Procedure: Gen IA sobre MP3 WhatsApp/OneMarketer
 -- Patrón equivalente a Genesys (external table + AI.GENERATE_TABLE + hist)
 --
--- Desplegar (ejemplo dev):
---   bq query --use_legacy_sql=false < procedures/sp_onemarketer_whatsapp_gen_ia.sql
+-- IMPORTANTE — ubicación del dataset:
+--   DATASET_ANALYTICS (adf_speech_analytics) debe estar en US (misma región que
+--   la conexión utp_gen_ia_process y el modelo Gemini). NO en us-central1.
+--   Fuentes raw_onemarketer pueden estar en us-central1; el SP vive en US.
+--
+-- Desplegar (sustituir placeholders — ver deploy/prd_substitutions.sql):
+--   bq query --use_legacy_sql=false --location=US < procedures/sp_onemarketer_whatsapp_gen_ia.sql
 --
 -- Ejecutar:
---   CALL `dev-utpbi-data-operation.adf_speech_analytics.sp_onemarketer_whatsapp_gen_ia`(DATE '2026-06-09');
+--   CALL `${PROJECT_ID}.${DATASET_ANALYTICS}.sp_onemarketer_whatsapp_gen_ia`(DATE '2026-06-09');
 -- =============================================================================
 
 CREATE OR REPLACE PROCEDURE `${PROJECT_ID}.${DATASET_ANALYTICS}.sp_onemarketer_whatsapp_gen_ia`(

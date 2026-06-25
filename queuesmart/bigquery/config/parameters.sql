@@ -1,0 +1,24 @@
+-- =============================================================================
+-- QueeSmart MP3 — PRODUCCIÓN
+-- =============================================================================
+--
+-- PROJECT_ID        = prd-utpbi-data-operation
+-- DATASET_RAW       = raw_queuesmart          (us-central1)
+-- DATASET_ANALYTICS = adf_speech_analytics    (US — Gen IA)
+-- BQ_CONNECTION     = `prd-utpbi-data-operation.US.utp_gen_ia_process`
+-- GEMINI_MODEL      = `prd-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`
+-- EXTERNAL_TABLE    = `prd-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_queuesmart_mp3`
+--
+-- Gen IA (flujo principal):
+--   hist_queesmart_mp3_catalog  ← job qs_s3_to_gcs
+--   sp_queuesmart_mp3_gen_ia    ← CALL en adf_speech_analytics (US)
+--   hist_queuesmart_mp3_gen_ia_process_data_raw / _prd
+--
+-- Orquestación diaria:
+--   1. qs_s3_to_gcs (ayer)
+--   2. CALL `prd-utpbi-data-operation.adf_speech_analytics.sp_queuesmart_mp3_gen_ia`(ayer)
+--
+-- Despliegue: ver deploy/prd_gen_ia.sql
+-- Ejemplo CALL: examples/call_sp_gen_ia_prd.sql
+--
+-- (Opcional) CRM Ticketero: sp_queuesmart_mp3_consolidate + qs_sql_to_bq

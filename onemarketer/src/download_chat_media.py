@@ -765,7 +765,7 @@ def process_media_for_date(
         ffmpeg_ok = _ffmpeg_available()
         print(
             f"[mp3] enabled=True | tabla={mp3_bq_cfg.get('table_id', 'reporte_whatsapp_mp3')} | "
-            f"gcs={gcs_path}/{{fecha}}/{mp3_cfg.get('gcs_subfolder', 'mp3')} | "
+            f"gcs={gcs_path}/{{fecha}}/{mp3_cfg.get('gcs_subfolder', 'media')} | "
             f"ffmpeg={'OK' if ffmpeg_ok else 'NO ENCONTRADO'}"
         )
         if not ffmpeg_ok:

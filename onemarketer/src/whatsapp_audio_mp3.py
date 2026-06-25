@@ -69,7 +69,7 @@ def convert_whatsapp_audio_row(
     """
     audio_cfg = mp3_cfg.get("audio", {})
     gcs_base = resolve_gcs_base(mp3_cfg, storage_gcs_path)
-    subfolder = mp3_cfg.get("gcs_subfolder", "mp3")
+    subfolder = mp3_cfg.get("gcs_subfolder", "media")
     mp3_name = mp3_file_name(storage_file_name)
     ids = resolve_chat_ids(
         chat_line,
@@ -118,7 +118,7 @@ def convert_whatsapp_audio_row(
         print(f"    [mp3] ya existe en GCS: {base_row['gcs_uri']}")
         return base_row
 
-    # Ya es MP3: registrar apuntando al raw (o re-subir a ruta mp3)
+    # Ya es MP3: registrar apuntando al archivo en media/
     if ext == ".mp3":
         if source_gcs_uri:
             base_row["gcs_uri"] = source_gcs_uri

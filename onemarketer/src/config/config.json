@@ -84,7 +84,7 @@
      },
      "audioToMp3":{
         "enabled":true,
-        "gcs_subfolder":"mp3",
+        "gcs_subfolder":"media",
         "audio":{
            "supported_extensions":[
               ".ogg",".opus",".wav",".wave",".flac",".m4a",".aac",

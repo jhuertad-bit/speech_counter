@@ -20,6 +20,9 @@ ONEMARKETER_ETL_ENV: Dict[str, str] = {
 }
 ONEMARKETER_ETL_REQUIRED = ("project_id", "bucket_name", "dataset_id", "region")
 
+# Ruta base GCS (reporteChats JSONL + medios/MP3). Prod: reportechats; dev: reporteChats.
+STORAGE_GCS_PATH_ENV = "GCP_GCS_PATH"
+
 ONEMARKETER_API_ENV: Dict[str, str] = {
     "project_id": "GCP_PROJECT_ID",
     "bucket_name": "GCP_BUCKET_NAME",
@@ -177,6 +180,22 @@ def print_runtime_gcp_info(
         for line in extra_lines:
             print(f"  {line}")
     print("=" * 60)
+
+
+def apply_storage_gcs_path_override(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Sobrescribe storage.gcs_path en reporteChats y descargaChatsMedia (env > config.json)."""
+    gcs_path = os.environ.get(STORAGE_GCS_PATH_ENV, "").strip()
+    if not gcs_path:
+        return config
+    for section in ("reporteChats", "descargaChatsMedia"):
+        block = config.get(section)
+        if not isinstance(block, dict):
+            continue
+        storage = block.setdefault("storage", {})
+        if isinstance(storage, dict):
+            storage["gcs_path"] = gcs_path
+    print(f"[onemarketer-etl] gcs_path desde {STORAGE_GCS_PATH_ENV}: {gcs_path}")
+    return config
 
 
 def finalize_gcp_config(

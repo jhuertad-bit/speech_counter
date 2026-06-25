@@ -4,7 +4,8 @@
 #   Obligatorias: _PROJECT_ID, _FUNCTION_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME,
 #                 _DATASET_ID, _SCHEDULER_NAME, _SERVICE_ACCOUNT_NAME
 #   Opcionales:   _LOCATION, _REPO_NAME, _RUNTIME, _MEMORY, _TIMEOUT, _CPU,
-#                 _MAX_INSTANCES, _CONCURRENCY, _ALLOW_UNAUTHENTICATED
+#                 _MAX_INSTANCES, _CONCURRENCY, _ALLOW_UNAUTHENTICATED,
+#                 _GCS_PATH (prod: utp_pregrado_endpoint/reportechats/services/getChats)
 substitutions:
   _LOCATION: 'us-central1'
   _REPO_NAME: 'gcf-artifacts'
@@ -40,6 +41,7 @@ steps:
       - '_MAX_INSTANCES=${_MAX_INSTANCES}'
       - '_CONCURRENCY=${_CONCURRENCY}'
       - '_ALLOW_UNAUTHENTICATED=${_ALLOW_UNAUTHENTICATED}'
+      - '_GCS_PATH=${_GCS_PATH}'
       - '_SOURCE_DIR=onemarketer/src'
 
 options:

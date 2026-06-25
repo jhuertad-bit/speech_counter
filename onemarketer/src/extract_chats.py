@@ -21,6 +21,7 @@ from google.cloud import bigquery
 from gcp_runtime_log import (
     ONEMARKETER_ETL_ENV,
     ONEMARKETER_ETL_REQUIRED,
+    apply_storage_gcs_path_override,
     finalize_gcp_config,
     get_runtime_service_account_email,
     print_runtime_gcp_info,
@@ -112,9 +113,11 @@ def load_config(config_file: str) -> Dict[str, Any]:
             f"[onemarketer-etl] Config tablas/API desde {config_file} "
             "(URLs, keys, reporteChats, descargaChatsMedia)"
         )
-        return finalize_gcp_config(
-            config, ONEMARKETER_ETL_ENV, ONEMARKETER_ETL_REQUIRED,
-            service_label="onemarketer-etl",
+        return apply_storage_gcs_path_override(
+            finalize_gcp_config(
+                config, ONEMARKETER_ETL_ENV, ONEMARKETER_ETL_REQUIRED,
+                service_label="onemarketer-etl",
+            )
         )
         
     except FileNotFoundError:

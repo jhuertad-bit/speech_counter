@@ -21,5 +21,5 @@
 --         -e "s|\${EXTERNAL_TABLE_TMP}|${EXTERNAL_TABLE_TMP}|g" \
 --         -e "s|\${CRM_PROJECT}|${CRM_PROJECT}|g" \
 --         -e "s|\${CRM_DATASET}|${CRM_DATASET}|g" \
---         "$f" | bq query --use_legacy_sql=false
+--         "$f" | bq query --use_legacy_sql=false --location=US
 --   done

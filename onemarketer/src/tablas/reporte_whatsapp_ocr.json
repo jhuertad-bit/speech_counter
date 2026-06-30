@@ -1,0 +1,20 @@
+[
+  {"name": "fecha_evento", "type": "DATE", "mode": "REQUIRED"},
+  {"name": "fecha_procesamiento", "type": "TIMESTAMP", "mode": "NULLABLE"},
+  {"name": "idcase", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "idmessage", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "waid", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "mime", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "media_type", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "source_gcs_uri", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "optimized_gcs_uri", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "source_file_name", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "ocr_engine", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "ocr_method", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "ocr_text", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "ocr_confidence", "type": "FLOAT", "mode": "NULLABLE"},
+  {"name": "page_count", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "char_count", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "ocr_status", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "error_message", "type": "STRING", "mode": "NULLABLE"}
+]

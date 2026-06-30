@@ -1,0 +1,23 @@
+{
+  "gcp": {
+    "project_id": "prd-utpbi-data-operation",
+    "bucket_name": "prd-utp-stg-genesys-audios-b3k7w1n9x4v6p0j2t8q5m1z",
+    "path_audios_input": "data/input/genesys_audios_descarga_raw/fecha_descarga=YYYY-MM-DD/hora_descarga=HH",
+    "path_audios_mp3": "data/input/genesys_audios_descarga_mp3_raw/fecha_descarga=YYYY-MM-DD/hora_descarga=HH",
+    "cloud_function_name": "prd-utpbi-audio-to-mp3-converter",
+    "service_account_email": "genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com",
+    "region": "us-central1"
+  },
+  "audio": {
+    "supported_extensions": [
+      ".ogg", ".opus", ".wav", ".wave", ".flac", ".m4a", ".aac",
+      ".wma", ".amr", ".3gp", ".mp4", ".webm", ".aiff", ".aif", ".caf", ".mp2",
+      ".mpeg", ".mpg", ".mov", ".avi", ".mkv", ".m4v", ".wmv", ".flv", ".ts"
+    ],
+    "include_video_containers": true,
+    "default_bitrate": "128k",
+    "skip_existing_mp3": true,
+    "min_duration_seconds": 0.1,
+    "ffmpeg_timeout_seconds": 300
+  }
+}

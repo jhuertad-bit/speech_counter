@@ -1,0 +1,260 @@
+[
+  {
+    "name": "agent_open",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Operador Abre: Operador al que se le asigna el caso, ya sea manual o automáticamente."
+  },
+  {
+    "name": "waiting_time",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Tiempo en cola espera: Tiempo que transcurre entre la derivación del caso desde el Bot a un Operador."
+  },
+  {
+    "name": "event_open",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Evento que indica cómo se inició el caso//Auto Case starts: Cuando el caso es atendido automáticamente por el sistema, por ejemplo, los casos atendidos por el bot, o casos fuera de horario a los cuales se les envía el mensaje de fuera de horario automáticamente. Case starts: Casos asignados y atendidos por operadores."
+  },
+  {
+    "name": "channel",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Canal por el cual se comunicó el cliente: Facebook, WhatsApp, Webchat, Instagram."
+  },
+  {
+    "name": "end_time",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "Fecha de cierre de caso"
+  },
+  {
+    "name": "total_messages",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Total Mensajes: Contabiliza la cantidad total de mensajes de la conversación entre cliente y operador."
+  },
+  {
+    "name": "case_comments",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Comentarios del caso agregados manualmente por el operador"
+  },
+  {
+    "name": "duration",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Duración: Duración del caso, comprende el tiempo transcurre desde que el caso es asignado hasta que se cierra el caso, ya sea manual o automáticamente."
+  },
+  {
+    "name": "category_description",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Categoría: Tipificación que se le asigna al caso una vez que ha sido cerrado. Este campo siempre se encontrará en el reporte y es customizable por el Administrador."
+  },
+  {
+    "name": "start_time",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "Fecha de inicio de caso"
+  },
+  {
+    "name": "agent_close",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Operador Cierre: Operador que cierra el caso. Si hubo una transferencia de caso durante la atención el operador de cierre será distinto. En caso de que este campo no contenga el dato en el reporte, se debe que al momento de generarlo aún se encontraba abierto o en curso."
+  },
+  {
+    "name": "user_id",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Id usuario: Contiene el identificador del canal por el cual se comunicó el cliente. Ejemplo: El número de teléfono del cliente para el caso del canal WhatsApp."
+  },
+  {
+    "name": "waiting_time_in_case",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "Tiempo de espera cliente: Sumatoria de los tiempos de respuesta del Operador a las interacciones con el cliente. En este caso, entenderemos interacción a uno o más mensajes enviados por el cliente antes de obtener una respuesta por parte del Operador."
+  },
+  {
+    "name": "id_session_log",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "Indicador único de sesión del operador y se crea cada vez que ingresa alsistema"
+  },
+  {
+    "name": "user_messages",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "Tot. Mensajes Cliente: Contabiliza la cantidad total de mensajes emitidos por el cliente."
+  },
+  {
+    "name": "event_close",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Evento que indica cómo finalizó el caso//Auto Case ends: Cuando el caso es finalizado automáticamente por el sistema, por ejemplo, los casos atendidos por el bot, o casos fuera de horario a los cuales se les envía el mensaje de fuera de horario y el caso se cierra automáticamente. Case ends: Casos asignados y atendidos por operadores."
+  },
+  {
+    "name": "agent_messages",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "Tot. Mensajes Operador: Contabiliza la cantidad total de mensajes emitidos por el Operador y las respuestas automáticas enviadas por la consola."
+  },
+  {
+    "name": "id_message_case ",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "ID del mensaje que inicia el caso."
+  },
+  {
+    "name": "first_answer_message",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "TS 1er Mensaje: Fecha y hora del primer mensaje emitido por el cliente, previa asignación a un operador y posterior a la atención del Bot."
+  },
+  {
+    "name": "intent_list",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "muestra las intenciones, en base a las frases del cliente y que retornaron los sistemas de dialogFlow (integrado con ITR)"
+  },
+  {
+    "name": "id_case",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Id Caso: Número identificador de cada caso de atención. Es un correlativo que comienza desde el 1. Este número se genera desde que comienza la atención del bot y se mantiene a lo largo del ciclo de atención, es independiente de los cambios de estado del caso: asignado a operador, pendiente o cerrado (de forma automática o manual)."
+  },
+  {
+    "name": "skill",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Especialidad en la que se divide un equipo de atención y al que pertenece el operador/supervisor"
+  },
+  {
+    "name": "answer_time",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Tiempo 1ra Respuesta: Tiempo que transcurre para que el cliente reciba la primera respuesta del Operador asignado, una vez que bot transfiere caso"
+  },
+  {
+    "name": "lcra_campus",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Campus"
+  },
+  {
+    "name": "lcra_celular_in",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Celular In"
+  },
+  {
+    "name": "lcra_dni",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones DNI"
+  },
+  {
+    "name": "lcra_edad",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Edad"
+  },
+  {
+    "name": "lcra_fecha_cli",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Fecha Cliente"
+  },
+  {
+    "name": "lcra_flujo",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Flujo"
+  },
+  {
+    "name": "lcra_flujo_completo",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Flujo Completo"
+  },
+  {
+    "name": "lcra_hora_cli",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Hora Cliente"
+  },
+  {
+    "name": "lcra_lead",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Lead"
+  },
+  {
+    "name": "lcra_origen",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Origen"
+  },
+  {
+    "name": "lcra_postulante",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Postulante"
+  },
+  {
+    "name": "lcra_tipo_cli",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Tipo Cliente"
+  },
+  {
+    "name": "lcra_traza",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Traza"
+  },
+  {
+    "name": "lcra_traza_seg",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Traza Seg"
+  },
+  {
+    "name": "lcra_traza_txt",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "listaCasosReporteAtenciones Traza Txt"
+  },
+  {
+    "name": "poll_answer_8",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "DEPRECADO EN DOCUMENTACION API: Revisar"
+  },
+  {
+    "name": "time_wait_operator",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "DEPRECADO EN DOCUMENTACION API: Revisar"
+  },
+  {
+    "name": "cli_nombre",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "DEPRECADO EN DOCUMENTACION API: Revisar"
+  },
+  {
+    "name": "empty",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "DEPRECADO EN DOCUMENTACION API: Revisar"
+  },
+  {
+    "name": "extra_info",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "DEPRECADO EN DOCUMENTACION API: Revisar"
+  }
+]

@@ -1,0 +1,11 @@
+-- =============================================================================
+-- qs_sql_to_bq — parámetros
+-- =============================================================================
+--
+--   PROJECT_ID   = dev-utpbi-data-operation
+--   DATASET_RAW  = raw_queuesmart
+--   LOCATION     = us-central1
+--
+-- Orden despliegue:
+--   1. raw_queuesmart dataset (ver qs_s3_to_gcs/bigquery/datasets/raw_queuesmart.sql)
+--   2. bigquery/tables/hist_queuesmart_ticketero_raw.sql

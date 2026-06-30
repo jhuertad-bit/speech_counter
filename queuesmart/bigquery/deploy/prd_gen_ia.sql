@@ -1,0 +1,23 @@
+-- Despliegue PRD — Gen IA QueeSmart (hist_queesmart_mp3_catalog → Gemini)
+--
+-- Orden:
+--   1. Vista inspección (us-central1)
+--   2. Tablas hist (US)
+--   3. Stored procedure (US)
+--
+-- bq query --use_legacy_sql=false --location=us-central1 \
+--   < queuesmart/bigquery/views/v_hist_queesmart_mp3_catalog_ia_input.sql
+--
+-- bq query --use_legacy_sql=false --location=US \
+--   < queuesmart/bigquery/tables/hist_queuesmart_mp3_gen_ia_raw.sql
+--
+-- bq query --use_legacy_sql=false --location=US \
+--   < queuesmart/bigquery/tables/hist_queuesmart_mp3_gen_ia_prd.sql
+--
+-- bq query --use_legacy_sql=false --location=US \
+--   < queuesmart/bigquery/procedures/sp_queuesmart_mp3_gen_ia.sql
+--
+-- Ejecutar:
+--   CALL `prd-utpbi-data-operation.adf_speech_analytics.sp_queuesmart_mp3_gen_ia`(
+--     DATE_SUB(CURRENT_DATE('America/Lima'), INTERVAL 1 DAY)
+--   );

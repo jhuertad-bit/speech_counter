@@ -1,0 +1,75 @@
+{
+  "gcp":{
+    "project_id":"dev-utpbi-data-operation",
+    "bucket_name":"dev-utp-stg-onemarketer-k7m4n9p2q8r5t3v6w1x0",
+    "dataset_id":"raw_onemarketer"
+  },
+  "reporteAtenciones":{
+    "enabled":true,
+    "processing":{
+      "batch_size":10000,
+      "show_progress":true,
+      "output_file":"reporteAtenciones.jsonl"
+    },
+    "api":{
+      "base_url":"https://utp.onemarketer.cl/utp_pregrado/reportapi",
+      "context":1,
+      "timeout":30
+    },
+    "storage":{
+      "upload_gcs":true,
+      "gcs_path":"utp_pregrado/reporteAtenciones/landing"
+    },
+    "bigquery":{
+      "create_bigquery":true,
+      "partition": {
+        "type":"DAY",
+        "field":"start_time"
+      },
+      "table_id":"reporteAtenciones",
+      "write_disposition":"WRITE_APPEND",
+      "source_format":"NEWLINE_DELIMITED_JSON",
+      "gcs_path":"utp_pregrado/reporteAtenciones/raw"
+    },
+    "date_conversion":{
+      "enabled":true,
+      "input_format":"DD-MM-YYYY HH:MM:SS",
+      "output_format":"YYYY-MM-DD HH:MM:SS",
+      "year_threshold":30
+    }
+  },
+  "reporteAccesoOperadores":{
+    "enabled":true,
+    "processing":{
+      "batch_size":10000,
+      "show_progress":true,
+      "output_file":"reporteAccesoOperadores.jsonl"
+    },
+    "api":{
+      "base_url":"https://utp.onemarketer.cl/utp_pregrado/reportapi",
+      "context":1,
+      "timeout":30
+    },
+    "storage":{
+      "upload_gcs":true,
+      "gcs_path":"utp_pregrado/reporteAtenciones/landing"
+    },
+    "bigquery":{
+      "create_bigquery":true,
+      "partition": {
+        "type":"DAY",
+        "field":"begin_time"
+      },
+      "table_id":"reporteAccesoOperadores",
+      "write_disposition":"WRITE_APPEND",
+      "source_format":"NEWLINE_DELIMITED_JSON",
+      "gcs_path":"utp_pregrado/reporteAtenciones/raw"
+    },
+    "date_conversion":{
+      "enabled":true,
+      "input_format":"DD-MM-YYYY HH:MM:SS",
+      "output_format":"YYYY-MM-DD HH:MM:SS",
+      "year_threshold":30
+    }
+  }
+}

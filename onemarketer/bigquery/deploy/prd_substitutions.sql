@@ -1,0 +1,33 @@
+-- Despliegue PRD — sustituir placeholders y ejecutar con --location=US
+--
+--   export PROJECT_ID=prd-utpbi-data-operation
+--   export DATASET_RAW=raw_onemarketer
+--   export DATASET_ANALYTICS=adf_speech_analytics
+--   export BQ_CONNECTION='`prd-utpbi-data-operation.US.utp_gen_ia_process`'
+--   export GEMINI_MODEL='`prd-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`'
+--   export EXTERNAL_TABLE_TMP='`prd-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`'
+--   export CRM_PROJECT=prd-utpbi-data-storage-pv
+--   export CRM_DATASET=raw_dynamic_crm
+--
+-- Orden (todos con --location=US salvo vistas en raw_onemarketer si prefieres us-central1):
+--
+--   1. datasets/adf_speech_analytics.sql   (si no existe aún en prd)
+--   2. tables/hist_onemarketer_whatsapp_gen_ia_raw.sql
+--   3. tables/hist_onemarketer_whatsapp_gen_ia_prd.sql
+--   4. procedures/sp_onemarketer_whatsapp_gen_ia.sql
+--   5. views/*.sql  (en us-central1 si raw_onemarketer está ahí)
+--
+--   for f in datasets/adf_speech_analytics.sql tables/*.sql procedures/*.sql; do
+--     sed -e "s|\${PROJECT_ID}|${PROJECT_ID}|g" \
+--         -e "s|\${DATASET_RAW}|${DATASET_RAW}|g" \
+--         -e "s|\${DATASET_ANALYTICS}|${DATASET_ANALYTICS}|g" \
+--         -e "s|\${BQ_CONNECTION}|${BQ_CONNECTION}|g" \
+--         -e "s|\${GEMINI_MODEL}|${GEMINI_MODEL}|g" \
+--         -e "s|\${EXTERNAL_TABLE_TMP}|${EXTERNAL_TABLE_TMP}|g" \
+--         "$f" | bq query --use_legacy_sql=false --location=US
+--   done
+--
+-- Ejecutar SP:
+--   CALL `prd-utpbi-data-operation.adf_speech_analytics.sp_onemarketer_whatsapp_gen_ia`(
+--     DATE_SUB(CURRENT_DATE('America/Lima'), INTERVAL 1 DAY)
+--   );

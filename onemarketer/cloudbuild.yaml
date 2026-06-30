@@ -1,0 +1,48 @@
+# Pipeline: Cloud Functions Gen2 (HTTP) con Dockerfile (ffmpeg para audio→MP3).
+#
+# Variables de ambiente (dev/prd): ACTIVADOR → Variables de sustitución
+#   Obligatorias: _PROJECT_ID, _FUNCTION_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME,
+#                 _DATASET_ID, _SCHEDULER_NAME, _SERVICE_ACCOUNT_NAME
+#   Opcionales:   _LOCATION, _REPO_NAME, _RUNTIME, _MEMORY, _TIMEOUT, _CPU,
+#                 _MAX_INSTANCES, _CONCURRENCY, _ALLOW_UNAUTHENTICATED,
+#                 _GCS_PATH (prod: utp_pregrado_endpoint/reportechats/services/getChats)
+substitutions:
+  _LOCATION: 'us-central1'
+  _REPO_NAME: 'gcf-artifacts'
+  _RUNTIME: 'python310'
+  _ENTRY_POINT: 'main'
+  _MEMORY: '2Gi'
+  _TIMEOUT: '3600s'
+  _CPU: '2'
+  _MAX_INSTANCES: '3'
+  _CONCURRENCY: '1'
+  _ALLOW_UNAUTHENTICATED: 'false'
+
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - 'onemarketer/scripts/cloudbuild_deploy.sh'
+    env:
+      - '_PROJECT_ID=${_PROJECT_ID}'
+      - '_FUNCTION_NAME=${_FUNCTION_NAME}'
+      - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '_BUCKET_NAME=${_BUCKET_NAME}'
+      - '_DATASET_ID=${_DATASET_ID}'
+      - '_SCHEDULER_NAME=${_SCHEDULER_NAME}'
+      - '_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}'
+      - '_LOCATION=${_LOCATION}'
+      - '_REPO_NAME=${_REPO_NAME}'
+      - '_RUNTIME=${_RUNTIME}'
+      - '_ENTRY_POINT=${_ENTRY_POINT}'
+      - '_MEMORY=${_MEMORY}'
+      - '_TIMEOUT=${_TIMEOUT}'
+      - '_CPU=${_CPU}'
+      - '_MAX_INSTANCES=${_MAX_INSTANCES}'
+      - '_CONCURRENCY=${_CONCURRENCY}'
+      - '_ALLOW_UNAUTHENTICATED=${_ALLOW_UNAUTHENTICATED}'
+      - '_GCS_PATH=${_GCS_PATH}'
+      - '_SOURCE_DIR=onemarketer/src'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

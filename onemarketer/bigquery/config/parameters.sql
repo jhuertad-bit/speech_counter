@@ -1,0 +1,50 @@
+-- =============================================================================
+-- Parámetros OneMarketer WhatsApp Gen IA (ajustar por ambiente antes de desplegar)
+-- =============================================================================
+--
+-- DEV (ejemplo):
+--   PROJECT_ID          = dev-utpbi-data-operation
+--   DATASET_RAW         = raw_onemarketer
+--   DATASET_ANALYTICS   = adf_speech_analytics   -- o dataset dedicado en dev
+--   BQ_CONNECTION         = `dev-utpbi-data-operation.US.utp_gen_ia_process`
+--   GEMINI_MODEL        = `dev-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`
+--   EXTERNAL_TABLE_TMP  = `dev-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`
+--   CRM_PROJECT         = prd-utpbi-data-storage-pv   -- SIEMPRE prod CRM (no hay leads en dev)
+--   CRM_DATASET         = raw_dynamic_crm
+--
+-- PRD (ejemplo, alinear con Genesys):
+--   PROJECT_ID          = prd-utpbi-data-operation
+--   DATASET_RAW         = raw_onemarketer          (us-central1 — ETL)
+--   DATASET_ANALYTICS   = adf_speech_analytics     (US — Gen IA, igual que Genesys)
+--   BQ_CONNECTION         = `prd-utpbi-data-operation.US.utp_gen_ia_process`
+--   GEMINI_MODEL        = `prd-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`
+--   EXTERNAL_TABLE_TMP  = `prd-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`
+--
+-- ERROR COMÚN: crear el SP en raw_onemarketer (us-central1) y referenciar adf_speech_analytics.
+--   → "Dataset adf_speech_analytics was not found in location us-central1"
+-- Solución: SP + tablas hist en adf_speech_analytics (US). Ver deploy/prd_substitutions.sql
+--   CRM_PROJECT         = prd-utpbi-data-storage-pv
+--   CRM_DATASET         = raw_dynamic_crm
+--
+-- Cruce OneMarketer ↔ CRM:
+--   Vista principal (granularidad LEAD): v_onemarketer_lead_conversaciones
+--   Detalle por caso:                  v_onemarketer_caso_crm_lead
+--   lcra_lead = etiqueta de flujo ("Lead Completo"), NO es leads.leadid (GUID).
+--   Join: lcra_dni ↔ onetoone_nro | teléfono ↔ mobilephone (9 dígitos PE).
+--   DEV: desplegar vistas en dev-utpbi-data-operation pero CRM_PROJECT = prd-utpbi-data-storage-pv.
+--   IAM dev: roles/bigquery.dataViewer en prd-utpbi-data-storage-pv.raw_dynamic_crm.leads
+--
+-- Fuente MP3 (ETL onemarketer):
+--   raw_onemarketer.reporte_whatsapp_mp3  →  gcs_uri bajo getChats/{fecha}/media/
+--
+-- Ruta GCS base (JSONL + medios + MP3):
+--   DEV:  utp_pregrado_endpoint/reporteChats/services/getChats   (config.json default)
+--   PRD:  utp_pregrado_endpoint/reportechats/services/getChats  (activador: _GCS_PATH → GCP_GCS_PATH)
+--
+-- Orquestación sugerida:
+--   Cloud Scheduler / ADF → CALL adf_speech_analytics.sp_onemarketer_whatsapp_gen_ia(DATE);
+--   Ejecutar DESPUÉS del job onemarketer-etl del mismo día (job en us-central1, SP en US).
+--
+-- IAM:
+--   SA del job BQ: cloudvision no aplica; necesita AI/Gemini + lectura GCS vía CONNECTION
+--   La conexión utp_gen_ia_process debe incluir el bucket onemarketer.

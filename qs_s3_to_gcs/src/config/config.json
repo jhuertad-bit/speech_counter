@@ -8,7 +8,7 @@
   "gcp": {
     "project_id": "dev-utpbi-data-operation",
     "bucket_name": "dev-utp-stg-queuesmart",
-    "destination_prefix": "data/input/queuesmart_mp3/imported_from_s3/",
+    "destination_prefix": "queuesmart_mp3_s3/",
     "state_object": "state/s3_to_gcs_last_sync.json",
     "region": "us-central1",
     "dataset_id": "raw_queue_smart",

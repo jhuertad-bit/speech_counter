@@ -38,6 +38,18 @@ from converter import DEFAULT_LOUDNORM, convert_audio_to_mp3
 from secrets_loader import load_aws_credentials
 
 
+# Señales de audio ilegible/truncado (no reintentar; no fallar el Job).
+_UNCONVERTIBLE_MARKERS = (
+    "invalid as first byte of an EBML number",
+    "Error opening input",
+    "End of file",
+    "Invalid data found when processing input",
+    "archivo vacío en S3",
+    "Input vacío o inexistente",
+    "MP3 output is empty",
+)
+
+
 @dataclass
 class SyncResult:
     scanned: int
@@ -53,10 +65,17 @@ class SyncResult:
     already_in_gcs: int = 0
     bq_inserted: int = 0
     bq_cataloged: int = 0
+    skipped_corrupt: int = 0
+    unconvertible_new: list[str] | None = None
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _is_unconvertible_media_error(exc: BaseException) -> bool:
+    text = str(exc)
+    return any(marker in text for marker in _UNCONVERTIBLE_MARKERS)
 
 
 def build_s3_client(aws_cfg: dict[str, Any], secrets_cfg: dict[str, Any]):
@@ -194,6 +213,7 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
     filename_regex = sync_cfg.get("filename_regex", DEFAULT_FILENAME_REGEX)
     date_folder_format = sync_cfg.get("gcs_date_folder_format", "%Y-%m-%d")
     skip_if_exists = bool(sync_cfg.get("skip_if_exists_in_gcs", True))
+    treat_unconvertible_as_skip = bool(sync_cfg.get("treat_unconvertible_as_skip", True))
 
     s3_client = build_s3_client(aws_cfg, secrets_cfg)
     gcs_client = storage.Client(project=gcp_cfg.get("project_id"))
@@ -210,6 +230,9 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
 
     prior_state = read_state(gcs_client, gcs_bucket, state_object)
     watermark_before = prior_state.get("last_daily_date") or prior_state.get("last_modified_utc")
+    unconvertible: set[str] = {
+        str(k) for k in (prior_state.get("unconvertible_s3_keys") or []) if k
+    }
 
     print(
         f"[sync] mode={mode} date_window={target_date_str or 'ALL'} "
@@ -240,8 +263,10 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
     copied = 0
     skipped = 0
     already_in_gcs = 0
+    skipped_corrupt = 0
     bytes_copied = 0
     errors: list[str] = []
+    unconvertible_new: list[str] = []
     catalog_rows: list[dict[str, Any]] = []
     processed_at = datetime.now(timezone.utc)
 
@@ -268,6 +293,11 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
             gcs_prefix,
             date_folder_format=date_folder_format,
         )
+
+        if s3_key in unconvertible:
+            skipped_corrupt += 1
+            print(f"SKIP corrupt (state) {s3_key}")
+            continue
 
         if skip_if_exists and gcs_blob_exists(gcs_client, gcs_bucket, gcs_key):
             already_in_gcs += 1
@@ -320,8 +350,14 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
             )
         except Exception as exc:  # noqa: BLE001
             msg = f"{s3_key}: {type(exc).__name__}: {exc}"
-            errors.append(msg)
-            print(f"ERROR {msg}")
+            if treat_unconvertible_as_skip and _is_unconvertible_media_error(exc):
+                unconvertible.add(s3_key)
+                unconvertible_new.append(s3_key)
+                skipped_corrupt += 1
+                print(f"SKIP corrupt {msg}")
+            else:
+                errors.append(msg)
+                print(f"ERROR {msg}")
 
     bq_inserted = 0
     if bq_enabled and catalog_rows:
@@ -346,6 +382,9 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
     new_state["bytes_copied_last_run"] = bytes_copied
     new_state["already_in_gcs_last_run"] = already_in_gcs
     new_state["bq_inserted_last_run"] = bq_inserted
+    new_state["skipped_corrupt_last_run"] = skipped_corrupt
+    # Persistir poison list (cap para no inflar el state JSON)
+    new_state["unconvertible_s3_keys"] = sorted(unconvertible)[-5000:]
 
     if mode in {"daily_yesterday", "daily_last_n_days"} and date_end and copied > 0:
         new_state["last_daily_date"] = date_end.isoformat()
@@ -370,4 +409,6 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
         already_in_gcs=already_in_gcs,
         bq_inserted=bq_inserted,
         bq_cataloged=len(catalog_rows),
+        skipped_corrupt=skipped_corrupt,
+        unconvertible_new=unconvertible_new,
     )

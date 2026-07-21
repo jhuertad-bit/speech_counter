@@ -23,7 +23,8 @@
     "timezone": "America/Lima",
     "filename_regex": "^(?P<campus>[A-Za-z0-9]{3})(?P<type_code>[A-Za-z0-9]{3})-(?P<file_date>\\d{8})-(?P<correlative>\\d+)\\.(?P<ext>mp3|webm|ogg|opus|wav|flac|m4a|aac|wma|amr|3gp|mp4)$",
     "gcs_date_folder_format": "%Y-%m-%d",
-    "skip_if_exists_in_gcs": true
+    "skip_if_exists_in_gcs": true,
+    "treat_unconvertible_as_skip": true
   },
   "audio": {
     "default_bitrate": "128k",
@@ -46,7 +47,8 @@
     "call_consolidate_after_sync": true,
     "consolidate_procedure": "raw_queue_smart.sp_queuesmart_mp3_consolidate",
     "bq_location": "US",
-    "skip_consolidate_on_sync_errors": true
+    "skip_consolidate_on_sync_errors": true,
+    "consolidate_only_if_new": true
   },
   "secrets": {
     "source": "env",

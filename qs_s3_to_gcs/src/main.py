@@ -64,8 +64,16 @@ def main() -> int:
 
     should_call = bool(orch.get("call_consolidate_after_sync", False))
     skip_on_errors = bool(orch.get("skip_consolidate_on_sync_errors", True))
+    only_if_new = bool(orch.get("consolidate_only_if_new", True))
     if should_call and result.errors and skip_on_errors:
         print("[orchestration] omitiendo consolidate por errores en sync")
+        should_call = False
+    # Evita re-correr Gen IA cada N horas si no hubo MP3 nuevos ni inserts a catálogo
+    if should_call and only_if_new and result.copied == 0 and result.bq_inserted == 0:
+        print(
+            "[orchestration] omitiendo consolidate: sin archivos nuevos "
+            f"(copied={result.copied}, bq_inserted={result.bq_inserted})"
+        )
         should_call = False
 
     if should_call:
@@ -91,6 +99,8 @@ def main() -> int:
         "bq_cataloged": result.bq_cataloged,
         "bq_inserted": result.bq_inserted,
         "bytes_copied": result.bytes_copied,
+        "skipped_corrupt": result.skipped_corrupt,
+        "unconvertible_new": result.unconvertible_new or [],
         "watermark_before": result.watermark_before,
         "watermark_after": result.watermark_after,
         "consolidate_called": should_call,

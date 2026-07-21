@@ -28,7 +28,7 @@
   "audio": {
     "default_bitrate": "128k",
     "loudnorm_filter": "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11",
-    "ffmpeg_timeout_seconds": 300
+    "ffmpeg_timeout_seconds": 600
   },
   "batch": {
     "max_files": 500,

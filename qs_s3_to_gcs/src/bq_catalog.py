@@ -68,6 +68,7 @@ def build_catalog_row(
     sync_mode: str,
     processed_at: datetime | None = None,
     convert_method: str | None = None,
+    duration_seconds: float | None = None,
 ) -> dict[str, Any]:
     ts = processed_at or datetime.now(timezone.utc)
     file_date = parsed["file_date"]
@@ -84,6 +85,7 @@ def build_catalog_row(
         "s3_uri": f"s3://{s3_bucket}/{s3_key}",
         "s3_key": s3_key,
         "file_size_bytes": file_size_bytes,
+        "duration_seconds": duration_seconds,
         "sync_mode": sync_mode,
         "convert_method": convert_method,
     }

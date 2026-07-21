@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from typing import Any
@@ -27,6 +28,35 @@ def is_supported_audio(file_name: str) -> bool:
 def mp3_file_name(source_file_name: str) -> str:
     stem, _ = os.path.splitext(source_file_name)
     return f"{stem}.mp3"
+
+
+def probe_duration_seconds(audio_path: str, *, timeout: int = 60) -> float | None:
+    """Duración en segundos vía ffprobe; None si no se puede leer."""
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "json",
+        audio_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout or "{}")
+        raw = (payload.get("format") or {}).get("duration")
+        if raw is None:
+            return None
+        value = float(raw)
+        return value if value >= 0 else None
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
 
 
 def convert_audio_to_mp3(
@@ -68,9 +98,12 @@ def convert_audio_to_mp3(
     if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
         raise RuntimeError("MP3 output is empty")
 
+    duration_seconds = probe_duration_seconds(output_path, timeout=min(60, timeout))
+
     return {
         "method": "ffmpeg_loudnorm",
         "bitrate": bitrate,
         "loudnorm_filter": loudnorm_filter,
         "output_size_bytes": os.path.getsize(output_path),
+        "duration_seconds": duration_seconds,
     }

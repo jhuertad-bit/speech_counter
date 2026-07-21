@@ -166,8 +166,8 @@ def convert_s3_object_to_gcs_mp3(
     gcs_bucket: str,
     gcs_key: str,
     audio_cfg: dict[str, Any],
-) -> tuple[int, str]:
-    """Descarga S3 → ffmpeg loudnorm → MP3 en GCS. Retorna (bytes, convert_method)."""
+) -> tuple[int, str, float | None]:
+    """Descarga S3 → ffmpeg loudnorm → MP3 en GCS. Retorna (bytes, method, duration_seconds)."""
     response = s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
     data = response["Body"].read()
     if not data:
@@ -194,8 +194,10 @@ def convert_s3_object_to_gcs_mp3(
         size = os.path.getsize(output_path)
         blob = gcs_client.bucket(gcs_bucket).blob(gcs_key)
         blob.upload_from_filename(output_path, content_type="audio/mpeg")
+        raw_duration = meta.get("duration_seconds")
+        duration_seconds = float(raw_duration) if raw_duration is not None else None
 
-    return size, str(meta.get("method") or "ffmpeg_loudnorm")
+    return size, str(meta.get("method") or "ffmpeg_loudnorm"), duration_seconds
 
 
 def run_micro_batch(config: dict[str, Any]) -> SyncResult:
@@ -313,12 +315,13 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
                         sync_mode=mode,
                         processed_at=processed_at,
                         convert_method="already_in_gcs",
+                        duration_seconds=None,
                     )
                 )
             continue
 
         try:
-            size, convert_method = convert_s3_object_to_gcs_mp3(
+            size, convert_method, duration_seconds = convert_s3_object_to_gcs_mp3(
                 s3_client,
                 gcs_client,
                 s3_bucket,
@@ -342,11 +345,13 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
                         sync_mode=mode,
                         processed_at=processed_at,
                         convert_method=convert_method,
+                        duration_seconds=duration_seconds,
                     )
                 )
             print(
                 f"OK s3://{s3_bucket}/{s3_key} -> gs://{gcs_bucket}/{gcs_key} "
-                f"({size} bytes, src={source_name}, method={convert_method})"
+                f"({size} bytes, src={source_name}, method={convert_method}, "
+                f"duration_s={duration_seconds})"
             )
         except Exception as exc:  # noqa: BLE001
             msg = f"{s3_key}: {type(exc).__name__}: {exc}"

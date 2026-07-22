@@ -14,9 +14,13 @@ from bq_catalog import build_catalog_row, catalog_files
 from converter import (
     DEFAULT_NOISE_FILTER,
     DEFAULT_VOICE_FILTER,
+    KNOWN_STORAGE_EXTS,
     build_audio_filter,
     decide_action,
+    extension_for_action,
+    file_stem,
     probe_media,
+    storage_file_name,
     transcode_to_flac,
 )
 from media_io import copy_file, stream_file_to_gcs, stream_s3_to_file
@@ -42,6 +46,28 @@ def is_unconvertible_error(exc: BaseException) -> bool:
 
 def gcs_blob_exists(gcs_client: storage.Client, bucket: str, gcs_key: str) -> bool:
     return gcs_client.bucket(bucket).blob(gcs_key).exists()
+
+
+def find_existing_gcs_object(
+    gcs_client: storage.Client,
+    *,
+    bucket: str,
+    stem: str,
+    file_date,
+    gcs_prefix: str,
+    date_folder_format: str,
+) -> str | None:
+    """Busca objeto ya subido (legacy .mp3 u extensión real). Retorna gcs_key o None."""
+    for ext in KNOWN_STORAGE_EXTS:
+        key = gcs_key_for_audio(
+            storage_file_name(stem, ext),
+            file_date,
+            gcs_prefix,
+            date_folder_format=date_folder_format,
+        )
+        if gcs_blob_exists(gcs_client, bucket, key):
+            return key
+    return None
 
 
 def process_one_candidate(
@@ -76,50 +102,54 @@ def process_one_candidate(
     if not parsed:
         raise ValueError(f"nombre no parseable: {source_name}")
 
-    # Etiqueta heredada: objeto GCS sigue en *.mp3 aunque el payload sea FLAC/webm.
-    gcs_key = gcs_key_for_audio(
-        parsed["file_name"],
-        parsed["file_date"],
-        gcs_prefix,
-        date_folder_format=date_folder_format,
-    )
-
+    stem = file_stem(source_name)
     processed_at = datetime.now(timezone.utc)
     result: dict[str, Any] = {
         "s3_key": s3_key,
-        "gcs_key": gcs_key,
         "source_file_name": source_name,
         "status": "error",
     }
 
-    if skip_if_exists and gcs_blob_exists(gcs_client, gcs_bucket, gcs_key):
-        print(f"[worker] SKIP already_in_gcs gs://{gcs_bucket}/{gcs_key}")
-        result["status"] = "already_in_gcs"
-        result["action"] = "skip_exists"
-        if bool(bq_cfg.get("enabled", True)) and bool(bq_cfg.get("catalog_existing_in_gcs", True)):
-            row = build_catalog_row(
-                parsed=parsed,
-                gcs_bucket=gcs_bucket,
-                gcs_key=gcs_key,
-                s3_bucket=s3_bucket,
-                s3_key=s3_key,
-                file_size_bytes=int(item.get("size") or 0),
-                sync_mode=sync_mode,
-                processed_at=processed_at,
-                convert_method="already_in_gcs",
-                duration_seconds=None,
-                actual_format=None,
-                encoding=None,
-            )
-            inserted = catalog_files(
-                project_id=gcp_cfg["project_id"],
-                dataset_id=bq_cfg.get("dataset_id", "raw_queue_smart"),
-                table_id=bq_cfg.get("table_id", "hist_queesmart_mp3_catalog"),
-                rows=[row],
-                location=bq_cfg.get("location", "US"),
-            )
-            result["bq_inserted"] = inserted
-        return result
+    if skip_if_exists:
+        existing_key = find_existing_gcs_object(
+            gcs_client,
+            bucket=gcs_bucket,
+            stem=stem,
+            file_date=parsed["file_date"],
+            gcs_prefix=gcs_prefix,
+            date_folder_format=date_folder_format,
+        )
+        if existing_key:
+            print(f"[worker] SKIP already_in_gcs gs://{gcs_bucket}/{existing_key}")
+            stored_name = os.path.basename(existing_key)
+            catalog_parsed = {**parsed, "file_name": stored_name}
+            result["gcs_key"] = existing_key
+            result["status"] = "already_in_gcs"
+            result["action"] = "skip_exists"
+            if bool(bq_cfg.get("enabled", True)) and bool(bq_cfg.get("catalog_existing_in_gcs", True)):
+                row = build_catalog_row(
+                    parsed=catalog_parsed,
+                    gcs_bucket=gcs_bucket,
+                    gcs_key=existing_key,
+                    s3_bucket=s3_bucket,
+                    s3_key=s3_key,
+                    file_size_bytes=int(item.get("size") or 0),
+                    sync_mode=sync_mode,
+                    processed_at=processed_at,
+                    convert_method="already_in_gcs",
+                    duration_seconds=None,
+                    actual_format=None,
+                    encoding=None,
+                )
+                inserted = catalog_files(
+                    project_id=gcp_cfg["project_id"],
+                    dataset_id=bq_cfg.get("dataset_id", "raw_queue_smart"),
+                    table_id=bq_cfg.get("table_id", "hist_queesmart_mp3_catalog"),
+                    rows=[row],
+                    location=bq_cfg.get("location", "US"),
+                )
+                result["bq_inserted"] = inserted
+            return result
 
     voice_filter = str(audio_cfg.get("voice_filter") or audio_cfg.get("loudnorm_filter") or DEFAULT_VOICE_FILTER)
     enable_nr = bool(audio_cfg.get("enable_noise_reduction", False))
@@ -148,10 +178,29 @@ def process_one_candidate(
 
         probe = probe_media(local_src, timeout=min(60, timeout))
         action = decide_action(probe)
+        out_ext = extension_for_action(action, probe, source_name)
+        stored_name = storage_file_name(stem, out_ext)
+        gcs_key = gcs_key_for_audio(
+            stored_name,
+            parsed["file_date"],
+            gcs_prefix,
+            date_folder_format=date_folder_format,
+        )
+        catalog_parsed = {**parsed, "file_name": stored_name}
+        result["gcs_key"] = gcs_key
+
         print(
             f"[worker] probe format={probe.actual_format} "
-            f"duration_s={probe.duration_seconds} → action={action}"
+            f"duration_s={probe.duration_seconds} → action={action} "
+            f"gcs_ext={out_ext}"
         )
+
+        # Por si otro task subió entre el check previo y ahora
+        if skip_if_exists and gcs_blob_exists(gcs_client, gcs_bucket, gcs_key):
+            print(f"[worker] SKIP already_in_gcs (post-probe) gs://{gcs_bucket}/{gcs_key}")
+            result["status"] = "already_in_gcs"
+            result["action"] = "skip_exists"
+            return result
 
         if action == "pass_through":
             copy_file(local_src, local_out, chunk_size=chunk)
@@ -188,7 +237,7 @@ def process_one_candidate(
         )
 
     row = build_catalog_row(
-        parsed=parsed,
+        parsed=catalog_parsed,
         gcs_bucket=gcs_bucket,
         gcs_key=gcs_key,
         s3_bucket=s3_bucket,

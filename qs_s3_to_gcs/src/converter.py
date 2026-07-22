@@ -4,8 +4,9 @@ Speech-to-Text v2 (Chirp) soporta nativamente: webm/opus, ogg/opus, flac, wav, m
 Si el contenedor ya es compatible → pass-through (sin re-encode).
 Si no → FLAC + loudnorm + banda telefónica (sin pérdida, mejor para STT que MP3).
 
-Importante: las rutas/columnas con "mp3" en el nombre se mantienen (etiquetas heredadas).
-El formato real se reporta en actual_format / convert_method.
+Importante: el prefijo GCS / nombres de tablas pueden seguir diciendo "mp3"
+(etiquetas heredadas). El objeto en GCS usa la extensión real (.webm, .flac, …).
+El formato también se reporta en actual_format / encoding / convert_method.
 """
 
 from __future__ import annotations
@@ -21,6 +22,9 @@ SUPPORTED_EXTENSIONS = frozenset({
     ".m4a", ".aac", ".wma", ".amr", ".3gp", ".mp4", ".aiff", ".aif",
     ".caf", ".mp2", ".mpeg", ".mpg",
 })
+
+# Extensiones posibles ya existentes en GCS (legacy .mp3 + formatos reales).
+KNOWN_STORAGE_EXTS = (".webm", ".ogg", ".opus", ".flac", ".wav", ".mp3", ".m4a")
 
 # Loudnorm EBU R128 + banda voz telefónica (requisito STT / call center).
 DEFAULT_VOICE_FILTER = "highpass=f=200,lowpass=f=3400,loudnorm=I=-16:TP=-1.5:LRA=11"
@@ -64,9 +68,51 @@ def is_supported_audio(file_name: str) -> bool:
 
 
 def mp3_file_name(source_file_name: str) -> str:
-    """Etiqueta heredada: el objeto en GCS sigue nombrándose *.mp3 aunque el payload sea FLAC/webm."""
+    """Compat: stem.mp3 (legado). Preferir storage_file_name() para objetos nuevos."""
     stem, _ = os.path.splitext(source_file_name)
     return f"{stem}.mp3"
+
+
+def file_stem(source_file_name: str) -> str:
+    stem, _ = os.path.splitext(source_file_name)
+    return stem
+
+
+def storage_file_name(stem: str, extension: str) -> str:
+    """Nombre del objeto en GCS con extensión real (.webm, .flac, …)."""
+    ext = extension if extension.startswith(".") else f".{extension}"
+    return f"{stem}{ext.lower()}"
+
+
+def extension_for_action(action: str, probe: ProbeInfo, source_file_name: str) -> str:
+    """Extensión del blob según pass-through vs FLAC."""
+    if action == "transcode_flac":
+        return ".flac"
+    # pass-through: preferir extensión del archivo origen si es conocida
+    _, src_ext = os.path.splitext(source_file_name.lower())
+    if src_ext in SUPPORTED_EXTENSIONS:
+        if src_ext == ".wave":
+            return ".wav"
+        return src_ext
+    return extension_from_probe(probe)
+
+
+def extension_from_probe(probe: ProbeInfo) -> str:
+    fmt = probe.format_name or ""
+    codec = probe.codec_name or ""
+    if "webm" in fmt or "matroska" in fmt:
+        return ".webm"
+    if "ogg" in fmt:
+        return ".ogg"
+    if "flac" in fmt:
+        return ".flac"
+    if "wav" in fmt or "w64" in fmt:
+        return ".wav"
+    if "mp3" in fmt or codec == "mp3":
+        return ".mp3"
+    if "opus" in codec:
+        return ".ogg"
+    return ".bin"
 
 
 def probe_media(audio_path: str, *, timeout: int = 60) -> ProbeInfo:

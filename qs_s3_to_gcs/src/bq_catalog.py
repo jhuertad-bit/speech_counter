@@ -69,11 +69,17 @@ def build_catalog_row(
     processed_at: datetime | None = None,
     convert_method: str | None = None,
     duration_seconds: float | None = None,
+    actual_format: str | None = None,
+    encoding: str | None = None,
 ) -> dict[str, Any]:
     ts = processed_at or datetime.now(timezone.utc)
     file_date = parsed["file_date"]
+    if hasattr(file_date, "isoformat"):
+        fecha_audio = file_date.isoformat()
+    else:
+        fecha_audio = str(file_date)
     return {
-        "fecha_audio": file_date.isoformat(),
+        "fecha_audio": fecha_audio,
         "fecha_procesamiento": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "file_name": parsed["file_name"],
         "source_file_name": parsed.get("source_file_name") or parsed["file_name"],
@@ -88,6 +94,8 @@ def build_catalog_row(
         "duration_seconds": duration_seconds,
         "sync_mode": sync_mode,
         "convert_method": convert_method,
+        "actual_format": actual_format,
+        "encoding": encoding,
     }
 
 

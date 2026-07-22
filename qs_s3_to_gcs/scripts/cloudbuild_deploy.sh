@@ -19,15 +19,39 @@ require() {
   fi
 }
 
+# Trim espacios accidentales en variables del activador (p.ej. " prd-...")
+trim() { local v="${1:-}"; v="${v#"${v%%[![:space:]]*}"}"; v="${v%"${v##*[![:space:]]}"}"; printf '%s' "$v"; }
+
+_PROJECT_ID="$(trim "${_PROJECT_ID:-}")"
+_JOB_NAME="$(trim "${_JOB_NAME:-}")"
+_SERVICE_ACCOUNT="$(trim "${_SERVICE_ACCOUNT:-}")"
+_BUCKET_NAME="$(trim "${_BUCKET_NAME:-}")"
+_DATASET_ID="$(trim "${_DATASET_ID:-}")"
+_SCHEDULER_NAME="$(trim "${_SCHEDULER_NAME:-}")"
+_AWS_S3_BUCKET="$(trim "${_AWS_S3_BUCKET:-}")"
+_AWS_S3_PREFIX="$(trim "${_AWS_S3_PREFIX:-}")"
+_AWS_ENDPOINT_URL="$(trim "${_AWS_ENDPOINT_URL:-}")"
+_GCP_DESTINATION_PREFIX="$(trim "${_GCP_DESTINATION_PREFIX:-}")"
+_LOCATION="$(trim "${_LOCATION:-}")"
+_SOURCE_DIR="$(trim "${_SOURCE_DIR:-}")"
+_MEMORY="$(trim "${_MEMORY:-}")"
+_CPU="$(trim "${_CPU:-}")"
+_TASK_TIMEOUT="$(trim "${_TASK_TIMEOUT:-}")"
+_MAX_RETRIES="$(trim "${_MAX_RETRIES:-}")"
+_PARALLELISM="$(trim "${_PARALLELISM:-}")"
+_CONFIG_PATH="$(trim "${_CONFIG_PATH:-}")"
+_AWS_ACCESS_KEY_ID="$(trim "${_AWS_ACCESS_KEY_ID:-}")"
+_AWS_SECRET_ACCESS_KEY="$(trim "${_AWS_SECRET_ACCESS_KEY:-}")"
+
 echo "=== Validando variables del activador ==="
-require "_PROJECT_ID" "${_PROJECT_ID:-}"
-require "_JOB_NAME" "${_JOB_NAME:-}"
-require "_SERVICE_ACCOUNT" "${_SERVICE_ACCOUNT:-}"
-require "_BUCKET_NAME" "${_BUCKET_NAME:-}"
-require "_DATASET_ID" "${_DATASET_ID:-}"
-require "_AWS_ACCESS_KEY_ID" "${_AWS_ACCESS_KEY_ID:-}"
-require "_AWS_SECRET_ACCESS_KEY" "${_AWS_SECRET_ACCESS_KEY:-}" "true"
-if [[ -n "${_SERVICE_ACCOUNT:-}" && "${_SERVICE_ACCOUNT}" != *"@"* ]]; then
+require "_PROJECT_ID" "${_PROJECT_ID}"
+require "_JOB_NAME" "${_JOB_NAME}"
+require "_SERVICE_ACCOUNT" "${_SERVICE_ACCOUNT}"
+require "_BUCKET_NAME" "${_BUCKET_NAME}"
+require "_DATASET_ID" "${_DATASET_ID}"
+require "_AWS_ACCESS_KEY_ID" "${_AWS_ACCESS_KEY_ID}"
+require "_AWS_SECRET_ACCESS_KEY" "${_AWS_SECRET_ACCESS_KEY}" "true"
+if [[ -n "${_SERVICE_ACCOUNT}" && "${_SERVICE_ACCOUNT}" != *"@"* ]]; then
   echo "ERROR: _SERVICE_ACCOUNT debe ser email completo (ej. nombre@${_PROJECT_ID}.iam.gserviceaccount.com), no '${_SERVICE_ACCOUNT}'" >&2
   missing=1
 fi
@@ -37,11 +61,12 @@ if [[ "${missing}" -ne 0 ]]; then
 fi
 
 SOURCE_DIR="${_SOURCE_DIR:-qs_s3_to_gcs/src}"
-MEMORY="${_MEMORY:-512Mi}"
-CPU="${_CPU:-1}"
-TASK_TIMEOUT="${_TASK_TIMEOUT:-900s}"
+TASK_TIMEOUT="${_TASK_TIMEOUT:-3600s}"
 MAX_RETRIES="${_MAX_RETRIES:-1}"
+PARALLELISM="${_PARALLELISM:-10}"
 CONFIG_PATH="${_CONFIG_PATH:-/app/config/config.json}"
+MEMORY="${_MEMORY:-1Gi}"
+CPU="${_CPU:-1}"
 
 if [[ ! -d "${SOURCE_DIR}" ]]; then
   echo "ERROR: no existe directorio fuente ${SOURCE_DIR}" >&2
@@ -135,11 +160,18 @@ DEPLOY_ARGS=(
   --cpu="${CPU}"
   --max-retries="${MAX_RETRIES}"
   --task-timeout="${TASK_TIMEOUT}"
+  --parallelism="${PARALLELISM}"
+  --tasks=1
 )
 
 echo "=== gcloud run jobs deploy ${_JOB_NAME} (source: ${SOURCE_DIR}/ + Dockerfile) ==="
 gcloud "${DEPLOY_ARGS[@]}"
 
 echo "=== Deploy OK ==="
-echo "Ejecutar manualmente:"
-echo "  gcloud run jobs execute ${_JOB_NAME} --region=${LOCATION} --project=${_PROJECT_ID}"
+echo "Orquestación: Cloud Workflows (queuesmart/workflows/daily_pipeline.yaml)"
+echo "Manual prepare:"
+echo "  gcloud run jobs execute ${_JOB_NAME} --region=${LOCATION} --project=${_PROJECT_ID} \\"
+echo "    --tasks=1 --update-env-vars=QS_JOB_ROLE=prepare,SYNC_PROCESS_DATE=YYYY-MM-DD"
+echo "Manual worker (N = count del manifiesto):"
+echo "  gcloud run jobs execute ${_JOB_NAME} --region=${LOCATION} --project=${_PROJECT_ID} \\"
+echo "    --tasks=N --update-env-vars=QS_JOB_ROLE=worker,SYNC_PROCESS_DATE=YYYY-MM-DD"

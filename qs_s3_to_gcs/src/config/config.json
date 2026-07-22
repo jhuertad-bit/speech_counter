@@ -18,6 +18,11 @@
     "schedule": "0 5 * * *",
     "schedule_timezone": "America/Lima"
   },
+  "job": {
+    "role": "worker",
+    "manifest_prefix": "state/manifests",
+    "max_parallelism": 10
+  },
   "sync": {
     "mode": "daily_yesterday",
     "timezone": "America/Lima",
@@ -27,9 +32,11 @@
     "treat_unconvertible_as_skip": true
   },
   "audio": {
-    "default_bitrate": "128k",
-    "loudnorm_filter": "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11",
-    "ffmpeg_timeout_seconds": 600
+    "voice_filter": "highpass=f=200,lowpass=f=3400,loudnorm=I=-16:TP=-1.5:LRA=11",
+    "enable_noise_reduction": false,
+    "noise_filter": "afftdn",
+    "ffmpeg_timeout_seconds": 300,
+    "io_chunk_size_bytes": 8388608
   },
   "batch": {
     "max_files": 500,
@@ -44,11 +51,8 @@
     "catalog_existing_in_gcs": true
   },
   "orchestration": {
-    "call_consolidate_after_sync": true,
-    "consolidate_procedure": "raw_queue_smart.sp_queuesmart_mp3_consolidate",
-    "bq_location": "US",
-    "skip_consolidate_on_sync_errors": true,
-    "consolidate_only_if_new": true
+    "call_consolidate_after_sync": false,
+    "note": "Orquestación movida a Cloud Workflows (queuesmart/workflows/daily_pipeline.yaml)"
   },
   "secrets": {
     "source": "env",

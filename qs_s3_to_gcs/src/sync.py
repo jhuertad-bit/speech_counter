@@ -1,21 +1,16 @@
 """
-Micro-batch: descarga audios S3 → convierte a MP3 (loudnorm) → sube a GCS.
+Listado S3 + prepare de manifiesto para Cloud Run Job multi-task.
 
-Patrón: AAABBB-YYYYMMDD-correlativo.(mp3|webm|...)
-Ejemplo: 015AD1-20260217-123728.mp3 | 095IX1-20260318-155702.webm
-
+Patrón nombre: AAABBB-YYYYMMDD-correlativo.(mp3|webm|...)
 Modos (config sync.mode):
-  - backfill_all:       todos los audios históricos
-  - daily_last_n_days:  últimos N días (fecha en nombre), default N=15
-  - daily_yesterday:    solo ayer (scheduler producción)
+  - backfill_all
+  - daily_last_n_days
+  - daily_yesterday
 """
 
 from __future__ import annotations
 
 import json
-import os
-import tempfile
-from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -28,54 +23,16 @@ from audio_paths import (
     basename_from_s3_key,
     file_date_in_window,
     format_date_window,
-    gcs_key_for_audio,
     parse_audio_filename,
     resolve_date_window,
     resolve_sync_mode,
 )
-from bq_catalog import build_catalog_row, catalog_files
-from converter import DEFAULT_LOUDNORM, convert_audio_to_mp3
+from manifest import write_manifest
 from secrets_loader import load_aws_credentials
-
-
-# Señales de audio ilegible/truncado (no reintentar; no fallar el Job).
-_UNCONVERTIBLE_MARKERS = (
-    "invalid as first byte of an EBML number",
-    "Error opening input",
-    "End of file",
-    "Invalid data found when processing input",
-    "archivo vacío en S3",
-    "Input vacío o inexistente",
-    "MP3 output is empty",
-)
-
-
-@dataclass
-class SyncResult:
-    scanned: int
-    copied: int
-    skipped: int
-    bytes_copied: int
-    errors: list[str]
-    watermark_before: str | None
-    watermark_after: str | None
-    mode: str = ""
-    target_date: str | None = None
-    process_date: date | None = None
-    already_in_gcs: int = 0
-    bq_inserted: int = 0
-    bq_cataloged: int = 0
-    skipped_corrupt: int = 0
-    unconvertible_new: list[str] | None = None
 
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _is_unconvertible_media_error(exc: BaseException) -> bool:
-    text = str(exc)
-    return any(marker in text for marker in _UNCONVERTIBLE_MARKERS)
 
 
 def build_s3_client(aws_cfg: dict[str, Any], secrets_cfg: dict[str, Any]):
@@ -126,118 +83,48 @@ def list_s3_objects(
     prefix: str,
     min_size: int,
 ) -> list[dict[str, Any]]:
-    paginator = s3_client.get_paginator("list_objects_v2")
     objects: list[dict[str, Any]] = []
-
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        for item in page.get("Contents", []):
-            key = item["Key"]
-            if key.endswith("/"):
-                continue
-            size = int(item.get("Size", 0))
+    paginator = s3_client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix or ""):
+        for obj in page.get("Contents") or []:
+            key = obj["Key"]
+            size = int(obj.get("Size") or 0)
             if size < min_size:
                 continue
-            last_modified = item["LastModified"]
-            if last_modified.tzinfo is None:
-                last_modified = last_modified.replace(tzinfo=timezone.utc)
+            if key.endswith("/"):
+                continue
             objects.append(
                 {
                     "key": key,
                     "size": size,
-                    "last_modified": last_modified,
+                    "last_modified": obj.get("LastModified"),
                     "file_name": basename_from_s3_key(key),
                 }
             )
-
     objects.sort(key=lambda x: (x["file_name"], x["last_modified"]))
     return objects
 
 
-def gcs_blob_exists(gcs_client: storage.Client, bucket: str, gcs_key: str) -> bool:
-    return gcs_client.bucket(bucket).blob(gcs_key).exists()
-
-
-def convert_s3_object_to_gcs_mp3(
-    s3_client,
-    gcs_client: storage.Client,
-    s3_bucket: str,
-    s3_key: str,
-    source_file_name: str,
-    gcs_bucket: str,
-    gcs_key: str,
-    audio_cfg: dict[str, Any],
-) -> tuple[int, str, float | None]:
-    """Descarga S3 → ffmpeg loudnorm → MP3 en GCS. Retorna (bytes, method, duration_seconds)."""
-    response = s3_client.get_object(Bucket=s3_bucket, Key=s3_key)
-    data = response["Body"].read()
-    if not data:
-        raise ValueError("archivo vacío en S3")
-
-    bitrate = str(audio_cfg.get("default_bitrate", "128k"))
-    loudnorm = str(audio_cfg.get("loudnorm_filter", DEFAULT_LOUDNORM))
-    timeout = int(audio_cfg.get("ffmpeg_timeout_seconds", 300))
-
-    with tempfile.TemporaryDirectory(prefix="qs_audio_") as tmpdir:
-        _, src_ext = os.path.splitext(source_file_name)
-        input_path = os.path.join(tmpdir, f"source{src_ext or '.bin'}")
-        output_path = os.path.join(tmpdir, "normalized.mp3")
-        with open(input_path, "wb") as handle:
-            handle.write(data)
-
-        meta = convert_audio_to_mp3(
-            input_path,
-            output_path,
-            bitrate=bitrate,
-            loudnorm_filter=loudnorm,
-            timeout=timeout,
-        )
-        size = os.path.getsize(output_path)
-        blob = gcs_client.bucket(gcs_bucket).blob(gcs_key)
-        blob.upload_from_filename(output_path, content_type="audio/mpeg")
-        raw_duration = meta.get("duration_seconds")
-        duration_seconds = float(raw_duration) if raw_duration is not None else None
-
-    return size, str(meta.get("method") or "ffmpeg_loudnorm"), duration_seconds
-
-
-def run_micro_batch(config: dict[str, Any]) -> SyncResult:
+def collect_candidates(config: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Lista candidatos del día/ventana. Retorna (items, info)."""
     aws_cfg = config["aws"]
-    gcp_cfg = config["gcp"]
-    batch_cfg = config["batch"]
     sync_cfg = config.get("sync", {})
-    audio_cfg = config.get("audio", {})
+    batch_cfg = config.get("batch", {})
     secrets_cfg = config.get("secrets", {})
 
     mode = resolve_sync_mode(sync_cfg)
     date_start, date_end = resolve_date_window(sync_cfg, mode)
     target_date_str = format_date_window(date_start, date_end)
-
     filename_regex = sync_cfg.get("filename_regex", DEFAULT_FILENAME_REGEX)
-    date_folder_format = sync_cfg.get("gcs_date_folder_format", "%Y-%m-%d")
-    skip_if_exists = bool(sync_cfg.get("skip_if_exists_in_gcs", True))
-    treat_unconvertible_as_skip = bool(sync_cfg.get("treat_unconvertible_as_skip", True))
+    min_size = int(batch_cfg.get("min_object_size_bytes", 1))
+    max_files = int(batch_cfg.get("max_files", 500))
 
     s3_client = build_s3_client(aws_cfg, secrets_cfg)
-    gcs_client = storage.Client(project=gcp_cfg.get("project_id"))
-
     s3_bucket = aws_cfg["bucket"]
     s3_prefix = aws_cfg.get("prefix", "")
-    gcs_bucket = gcp_cfg["bucket_name"]
-    gcs_prefix = gcp_cfg["destination_prefix"]
-    state_object = gcp_cfg["state_object"]
-
-    max_files = int(batch_cfg.get("max_files", 50))
-    max_total_bytes = int(batch_cfg.get("max_total_mb", 500)) * 1024 * 1024
-    min_size = int(batch_cfg.get("min_object_size_bytes", 1))
-
-    prior_state = read_state(gcs_client, gcs_bucket, state_object)
-    watermark_before = prior_state.get("last_daily_date") or prior_state.get("last_modified_utc")
-    unconvertible: set[str] = {
-        str(k) for k in (prior_state.get("unconvertible_s3_keys") or []) if k
-    }
 
     print(
-        f"[sync] mode={mode} date_window={target_date_str or 'ALL'} "
+        f"[prepare] mode={mode} date_window={target_date_str or 'ALL'} "
         f"prefix=s3://{s3_bucket}/{s3_prefix}"
     )
 
@@ -254,166 +141,102 @@ def run_micro_batch(config: dict[str, Any]) -> SyncResult:
         if not file_date_in_window(parsed["file_date"], date_start, date_end):
             rejected_date += 1
             continue
-        item["parsed"] = parsed
-        candidates.append(item)
+        # Serializa parsed para el manifiesto (fecha → ISO).
+        item_out = {
+            "key": item["key"],
+            "size": item["size"],
+            "file_name": item["file_name"],
+            "parsed": {
+                **parsed,
+                "file_date": parsed["file_date"].isoformat(),
+            },
+        }
+        candidates.append(item_out)
+
+    if max_files > 0:
+        candidates = candidates[:max_files]
 
     print(
-        f"[sync] s3_objects={len(all_objects)} candidates={len(candidates)} "
-        f"rejected_name={rejected_name} rejected_date={rejected_date}"
+        f"[prepare] s3_objects={len(all_objects)} candidates={len(candidates)} "
+        f"rejected_name={rejected_name} rejected_date={rejected_date} "
+        f"max_files={max_files}"
     )
 
-    copied = 0
-    skipped = 0
-    already_in_gcs = 0
-    skipped_corrupt = 0
-    bytes_copied = 0
-    errors: list[str] = []
-    unconvertible_new: list[str] = []
-    catalog_rows: list[dict[str, Any]] = []
-    processed_at = datetime.now(timezone.utc)
+    info = {
+        "mode": mode,
+        "target_date": target_date_str,
+        "process_date": date_end.isoformat() if date_end else None,
+        "scanned_s3": len(all_objects),
+        "candidates": len(candidates),
+        "rejected_name": rejected_name,
+        "rejected_date": rejected_date,
+    }
+    return candidates, info
 
-    bq_cfg = config.get("bigquery", {})
-    bq_enabled = bool(bq_cfg.get("enabled", True))
-    catalog_existing = bool(bq_cfg.get("catalog_existing_in_gcs", True))
 
-    for item in candidates:
-        if copied >= max_files:
-            skipped += 1
-            continue
-        if bytes_copied >= max_total_bytes:
-            skipped += 1
-            continue
+def run_prepare(config: dict[str, Any]) -> dict[str, Any]:
+    """Genera manifiesto JSONL + meta en GCS. Exit 0 siempre que se escriba el meta."""
+    gcp_cfg = config["gcp"]
+    job_cfg = config.get("job", {})
+    gcs_client = storage.Client(project=gcp_cfg.get("project_id"))
+    gcs_bucket = gcp_cfg["bucket_name"]
+    manifest_prefix = job_cfg.get("manifest_prefix", "state/manifests")
+    state_object = gcp_cfg.get("state_object", "state/s3_to_gcs_last_sync.json")
 
-        parsed = item["parsed"]
-        s3_key = item["key"]
-        mp3_name = parsed["file_name"]
-        source_name = parsed["source_file_name"]
-        file_date: date = parsed["file_date"]
-        gcs_key = gcs_key_for_audio(
-            mp3_name,
-            file_date,
-            gcs_prefix,
-            date_folder_format=date_folder_format,
-        )
+    candidates, info = collect_candidates(config)
+    process_date = info.get("process_date")
+    if not process_date:
+        # backfill: usar fecha UTC del prepare
+        process_date = datetime.now(timezone.utc).date().isoformat()
+        info["process_date"] = process_date
 
-        if s3_key in unconvertible:
-            skipped_corrupt += 1
-            print(f"SKIP corrupt (state) {s3_key}")
-            continue
+    # Rehidratar file_date string en parsed (ya ISO en manifiesto).
+    meta = write_manifest(
+        gcs_client,
+        bucket=gcs_bucket,
+        process_date=process_date,
+        items=candidates,
+        manifest_prefix=manifest_prefix,
+        extra_meta={
+            "mode": info["mode"],
+            "target_date": info.get("target_date"),
+            "scanned_s3": info["scanned_s3"],
+            "rejected_name": info["rejected_name"],
+            "rejected_date": info["rejected_date"],
+        },
+    )
 
-        if skip_if_exists and gcs_blob_exists(gcs_client, gcs_bucket, gcs_key):
-            already_in_gcs += 1
-            if bq_enabled and catalog_existing:
-                catalog_rows.append(
-                    build_catalog_row(
-                        parsed=parsed,
-                        gcs_bucket=gcs_bucket,
-                        gcs_key=gcs_key,
-                        s3_bucket=s3_bucket,
-                        s3_key=s3_key,
-                        file_size_bytes=int(item["size"]),
-                        sync_mode=mode,
-                        processed_at=processed_at,
-                        convert_method="already_in_gcs",
-                        duration_seconds=None,
-                    )
-                )
-            continue
-
-        try:
-            size, convert_method, duration_seconds = convert_s3_object_to_gcs_mp3(
-                s3_client,
-                gcs_client,
-                s3_bucket,
-                s3_key,
-                source_name,
-                gcs_bucket,
-                gcs_key,
-                audio_cfg,
-            )
-            copied += 1
-            bytes_copied += size
-            if bq_enabled:
-                catalog_rows.append(
-                    build_catalog_row(
-                        parsed=parsed,
-                        gcs_bucket=gcs_bucket,
-                        gcs_key=gcs_key,
-                        s3_bucket=s3_bucket,
-                        s3_key=s3_key,
-                        file_size_bytes=size,
-                        sync_mode=mode,
-                        processed_at=processed_at,
-                        convert_method=convert_method,
-                        duration_seconds=duration_seconds,
-                    )
-                )
-            print(
-                f"OK s3://{s3_bucket}/{s3_key} -> gs://{gcs_bucket}/{gcs_key} "
-                f"({size} bytes, src={source_name}, method={convert_method}, "
-                f"duration_s={duration_seconds})"
-            )
-        except Exception as exc:  # noqa: BLE001
-            msg = f"{s3_key}: {type(exc).__name__}: {exc}"
-            if treat_unconvertible_as_skip and _is_unconvertible_media_error(exc):
-                unconvertible.add(s3_key)
-                unconvertible_new.append(s3_key)
-                skipped_corrupt += 1
-                print(f"SKIP corrupt {msg}")
-            else:
-                errors.append(msg)
-                print(f"ERROR {msg}")
-
-    bq_inserted = 0
-    if bq_enabled and catalog_rows:
-        try:
-            bq_inserted = catalog_files(
-                project_id=gcp_cfg["project_id"],
-                dataset_id=bq_cfg.get("dataset_id", "raw_queue_smart"),
-                table_id=bq_cfg.get("table_id", "hist_queesmart_mp3_catalog"),
-                rows=catalog_rows,
-                location=bq_cfg.get("location", "US"),
-            )
-            print(f"[bq] cataloged={len(catalog_rows)} inserted={bq_inserted}")
-        except Exception as exc:  # noqa: BLE001
-            msg = f"bigquery: {exc}"
-            errors.append(msg)
-            print(f"ERROR {msg}")
-
-    new_state = dict(prior_state)
+    prior = read_state(gcs_client, gcs_bucket, state_object)
+    new_state = dict(prior)
     new_state["last_run_utc"] = _utc_now_iso()
-    new_state["last_mode"] = mode
-    new_state["files_copied_last_run"] = copied
-    new_state["bytes_copied_last_run"] = bytes_copied
-    new_state["already_in_gcs_last_run"] = already_in_gcs
-    new_state["bq_inserted_last_run"] = bq_inserted
-    new_state["skipped_corrupt_last_run"] = skipped_corrupt
-    # Persistir poison list (cap para no inflar el state JSON)
-    new_state["unconvertible_s3_keys"] = sorted(unconvertible)[-5000:]
-
-    if mode in {"daily_yesterday", "daily_last_n_days"} and date_end and copied > 0:
-        new_state["last_daily_date"] = date_end.isoformat()
-        new_state["last_date_window"] = target_date_str
-    if mode == "backfill_all" and copied == 0 and already_in_gcs > 0 and not errors:
-        new_state["backfill_complete"] = True
-
+    new_state["last_mode"] = info["mode"]
+    new_state["last_prepare_process_date"] = process_date
+    new_state["last_manifest_count"] = meta["count"]
+    new_state["last_manifest_object"] = meta["manifest_object"]
     write_state(gcs_client, gcs_bucket, state_object, new_state)
-    watermark_after = new_state.get("last_daily_date") or new_state.get("last_run_utc")
 
-    return SyncResult(
-        scanned=len(candidates),
-        copied=copied,
-        skipped=skipped,
-        bytes_copied=bytes_copied,
-        errors=errors,
-        watermark_before=watermark_before,
-        watermark_after=watermark_after,
-        mode=mode,
-        target_date=target_date_str,
-        process_date=date_end,
-        already_in_gcs=already_in_gcs,
-        bq_inserted=bq_inserted,
-        bq_cataloged=len(catalog_rows),
-        skipped_corrupt=skipped_corrupt,
-        unconvertible_new=unconvertible_new,
-    )
+    summary = {
+        "role": "prepare",
+        "status": "ok",
+        **info,
+        "manifest_count": meta["count"],
+        "manifest_object": meta["manifest_object"],
+        "meta_object": meta["meta_object"],
+    }
+    print(json.dumps(summary, indent=2))
+    return summary
+
+
+def parse_manifest_parsed(item: dict[str, Any], filename_regex: str) -> dict[str, Any]:
+    """Convierte parsed del manifiesto (file_date ISO) a tipos runtime."""
+    raw = item.get("parsed")
+    if not raw:
+        parsed = parse_audio_filename(item["file_name"], filename_regex)
+        if not parsed:
+            raise ValueError(f"nombre no parseable: {item.get('file_name')}")
+        return parsed
+    out = dict(raw)
+    fd = out.get("file_date")
+    if isinstance(fd, str):
+        out["file_date"] = date.fromisoformat(fd)
+    return out

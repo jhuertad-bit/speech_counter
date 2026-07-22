@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Entry point para Cloud Run Job o ejecución local del micro-batch S3 -> GCS.
+Cloud Run Job — QueeSmart S3 → GCS (prepare | worker).
 
-Flujo:
-  1) Traer audios + convertir MP3/loudnorm + catalogar
-  2) Si orchestration.call_consolidate_after_sync: CALL consolidate
-     (consolidate a su vez llama a Gen IA)
+Roles (env QS_JOB_ROLE o config job.role):
+  prepare  → lista S3 del día, escribe manifiesto JSONL + meta en GCS, exit 0
+  worker   → CLOUD_RUN_TASK_INDEX toma 1 línea del manifiesto, procesa y cataloga
+
+La orquestación de SPs (consolidate / STT / Gemini) vive en Cloud Workflows;
+este Job ya NO encadena stored procedures.
 """
 
 from __future__ import annotations
@@ -13,12 +15,23 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from bq_procedures import call_procedure
+from google.cloud import storage
+
+from audio_paths import DEFAULT_FILENAME_REGEX, resolve_sync_mode
 from config_loader import load_config
-from sync import run_micro_batch
+from manifest import read_manifest_item, read_manifest_meta
+from sync import (
+    build_s3_client,
+    parse_manifest_parsed,
+    read_state,
+    run_prepare,
+    write_state,
+)
+from worker import is_unconvertible_error, process_one_candidate
 
 CONFIG_PATH = os.environ.get(
     "CONFIG_PATH",
@@ -26,91 +39,172 @@ CONFIG_PATH = os.environ.get(
 )
 
 
-def _resolve_process_date(config: dict, result) -> date:
-    if result.process_date is not None:
-        return result.process_date
+def _resolve_role(config: dict[str, Any]) -> str:
+    role = (
+        os.environ.get("QS_JOB_ROLE")
+        or config.get("job", {}).get("role")
+        or "worker"
+    ).strip().lower()
+    if role not in {"prepare", "worker"}:
+        raise ValueError(f"QS_JOB_ROLE inválido: {role} (prepare|worker)")
+    return role
+
+
+def _process_date(config: dict[str, Any]) -> str:
+    override = (
+        os.environ.get("SYNC_PROCESS_DATE")
+        or os.environ.get("SYNC_TARGET_DATE")
+        or config.get("sync", {}).get("target_date")
+    )
+    if override:
+        return str(override).strip()
+    # Fallback: meta del último prepare en state
+    gcp = config["gcp"]
+    gcs = storage.Client(project=gcp.get("project_id"))
+    state = read_state(gcs, gcp["bucket_name"], gcp.get("state_object", "state/s3_to_gcs_last_sync.json"))
+    if state.get("last_prepare_process_date"):
+        return str(state["last_prepare_process_date"])
     tz_name = config.get("sync", {}).get("timezone", "America/Lima")
-    return datetime.now(ZoneInfo(tz_name)).date() - timedelta(days=1)
+    return (datetime.now(ZoneInfo(tz_name)).date()).isoformat()
 
 
-def _call_consolidate(config: dict, process_date: date) -> None:
-    orch = config.get("orchestration", {})
-    project_id = config["gcp"]["project_id"]
-    location = orch.get("bq_location") or config.get("bigquery", {}).get("location", "US")
-    procedure = orch.get(
-        "consolidate_procedure",
-        f"{project_id}.raw_queue_smart.sp_queuesmart_mp3_consolidate",
+def run_worker(config: dict[str, Any]) -> int:
+    gcp_cfg = config["gcp"]
+    aws_cfg = config["aws"]
+    sync_cfg = config.get("sync", {})
+    job_cfg = config.get("job", {})
+    secrets_cfg = config.get("secrets", {})
+    treat_unconvertible = bool(sync_cfg.get("treat_unconvertible_as_skip", True))
+
+    task_index = int(os.environ.get("CLOUD_RUN_TASK_INDEX", "0"))
+    task_count = int(os.environ.get("CLOUD_RUN_TASK_COUNT", "1"))
+    process_date = _process_date(config)
+    manifest_prefix = job_cfg.get("manifest_prefix", "state/manifests")
+    sync_mode = resolve_sync_mode(sync_cfg)
+    filename_regex = sync_cfg.get("filename_regex", DEFAULT_FILENAME_REGEX)
+
+    print(
+        f"[worker] task_index={task_index}/{task_count} "
+        f"process_date={process_date} mode={sync_mode}"
     )
-    if procedure.count(".") == 1:
-        procedure = f"{project_id}.{procedure}"
 
-    print(f"[orchestration] CALL `{procedure}`({process_date.isoformat()}) location={location}")
-    call_procedure(
-        project_id=project_id,
-        procedure_id=procedure,
-        args=[process_date],
-        location=location,
+    gcs_client = storage.Client(project=gcp_cfg.get("project_id"))
+    gcs_bucket = gcp_cfg["bucket_name"]
+    state_object = gcp_cfg.get("state_object", "state/s3_to_gcs_last_sync.json")
+
+    meta = read_manifest_meta(
+        gcs_client,
+        bucket=gcs_bucket,
+        process_date=process_date,
+        manifest_prefix=manifest_prefix,
     )
-    print("[orchestration] consolidate OK")
+    manifest_count = int(meta.get("count") or 0)
+    if manifest_count == 0:
+        print("[worker] manifiesto vacío — nada que procesar")
+        summary = {
+            "role": "worker",
+            "status": "ok",
+            "task_index": task_index,
+            "manifest_count": 0,
+            "result": "empty_manifest",
+        }
+        print(json.dumps(summary, indent=2))
+        return 0
+
+    if task_index >= manifest_count:
+        # Tasks sobrantes (si se lanzó con tasks > count): éxito no-op
+        print(f"[worker] task_index={task_index} >= count={manifest_count} — no-op")
+        return 0
+
+    item = read_manifest_item(
+        gcs_client,
+        bucket=gcs_bucket,
+        process_date=process_date,
+        manifest_prefix=manifest_prefix,
+        task_index=task_index,
+    )
+    if item is None:
+        print(f"[worker] sin ítem para index={task_index}")
+        return 0
+
+    # Poison list
+    prior = read_state(gcs_client, gcs_bucket, state_object)
+    unconvertible: set[str] = {
+        str(k) for k in (prior.get("unconvertible_s3_keys") or []) if k
+    }
+    s3_key = item["key"]
+    if s3_key in unconvertible:
+        print(f"[worker] SKIP corrupt (state) {s3_key}")
+        summary = {
+            "role": "worker",
+            "status": "ok",
+            "task_index": task_index,
+            "result": "skipped_corrupt_state",
+            "s3_key": s3_key,
+        }
+        print(json.dumps(summary, indent=2))
+        return 0
+
+    item["parsed"] = parse_manifest_parsed(item, filename_regex)
+    s3_client = build_s3_client(aws_cfg, secrets_cfg)
+
+    try:
+        outcome = process_one_candidate(
+            config=config,
+            s3_client=s3_client,
+            gcs_client=gcs_client,
+            item=item,
+            sync_mode=sync_mode,
+        )
+        summary = {
+            "role": "worker",
+            "status": "ok" if outcome.get("status") != "error" else "error",
+            "task_index": task_index,
+            "manifest_count": manifest_count,
+            **outcome,
+        }
+        print(json.dumps(summary, indent=2, default=str))
+        return 0 if outcome.get("status") != "error" else 1
+    except Exception as exc:  # noqa: BLE001
+        msg = f"{s3_key}: {type(exc).__name__}: {exc}"
+        if treat_unconvertible and is_unconvertible_error(exc):
+            unconvertible.add(s3_key)
+            new_state = dict(prior)
+            new_state["unconvertible_s3_keys"] = sorted(unconvertible)[-5000:]
+            write_state(gcs_client, gcs_bucket, state_object, new_state)
+            print(f"[worker] SKIP corrupt {msg}")
+            summary = {
+                "role": "worker",
+                "status": "ok",
+                "task_index": task_index,
+                "result": "skipped_corrupt",
+                "s3_key": s3_key,
+                "error": msg,
+            }
+            print(json.dumps(summary, indent=2))
+            return 0
+        print(f"[worker] ERROR {msg}")
+        summary = {
+            "role": "worker",
+            "status": "error",
+            "task_index": task_index,
+            "s3_key": s3_key,
+            "error": msg,
+        }
+        print(json.dumps(summary, indent=2))
+        return 1
 
 
 def main() -> int:
     config = load_config(CONFIG_PATH)
-    result = run_micro_batch(config)
+    role = _resolve_role(config)
+    print(f"[qs_s3_to_gcs] role={role}")
 
-    orch = config.get("orchestration", {})
-    consolidate_ok = None
-    consolidate_error = None
+    if role == "prepare":
+        run_prepare(config)
+        return 0
 
-    should_call = bool(orch.get("call_consolidate_after_sync", False))
-    skip_on_errors = bool(orch.get("skip_consolidate_on_sync_errors", True))
-    only_if_new = bool(orch.get("consolidate_only_if_new", True))
-    if should_call and result.errors and skip_on_errors:
-        print("[orchestration] omitiendo consolidate por errores en sync")
-        should_call = False
-    # Evita re-correr Gen IA cada N horas si no hubo MP3 nuevos ni inserts a catálogo
-    if should_call and only_if_new and result.copied == 0 and result.bq_inserted == 0:
-        print(
-            "[orchestration] omitiendo consolidate: sin archivos nuevos "
-            f"(copied={result.copied}, bq_inserted={result.bq_inserted})"
-        )
-        should_call = False
-
-    if should_call:
-        try:
-            process_date = _resolve_process_date(config, result)
-            _call_consolidate(config, process_date)
-            consolidate_ok = True
-        except Exception as exc:  # noqa: BLE001
-            consolidate_ok = False
-            consolidate_error = f"{type(exc).__name__}: {exc}"
-            print(f"[orchestration] ERROR consolidate: {consolidate_error}")
-            result.errors.append(f"consolidate: {consolidate_error}")
-
-    summary = {
-        "status": "ok" if not result.errors else "partial",
-        "mode": result.mode,
-        "target_date": result.target_date,
-        "process_date": result.process_date.isoformat() if result.process_date else None,
-        "scanned": result.scanned,
-        "copied": result.copied,
-        "skipped": result.skipped,
-        "already_in_gcs": result.already_in_gcs,
-        "bq_cataloged": result.bq_cataloged,
-        "bq_inserted": result.bq_inserted,
-        "bytes_copied": result.bytes_copied,
-        "skipped_corrupt": result.skipped_corrupt,
-        "unconvertible_new": result.unconvertible_new or [],
-        "watermark_before": result.watermark_before,
-        "watermark_after": result.watermark_after,
-        "consolidate_called": should_call,
-        "consolidate_ok": consolidate_ok,
-        "consolidate_error": consolidate_error,
-        "errors": result.errors,
-    }
-    print(json.dumps(summary, indent=2))
-
-    return 0 if not result.errors else 1
+    return run_worker(config)
 
 
 if __name__ == "__main__":

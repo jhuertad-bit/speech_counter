@@ -13,5 +13,7 @@
   {"name": "file_size_bytes", "type": "INTEGER", "mode": "NULLABLE"},
   {"name": "duration_seconds", "type": "FLOAT", "mode": "NULLABLE"},
   {"name": "sync_mode", "type": "STRING", "mode": "NULLABLE"},
-  {"name": "convert_method", "type": "STRING", "mode": "NULLABLE"}
+  {"name": "convert_method", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "actual_format", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "encoding", "type": "STRING", "mode": "NULLABLE"}
 ]

@@ -1,0 +1,23 @@
+{
+  "gcp": {
+    "project_id": "prd-utpbi-data-operation",
+    "bucket_name": "prd-utp-stg-queuesmart",
+    "stt_location": "us"
+  },
+  "bigquery": {
+    "location": "US",
+    "enriched_table": "prd-utpbi-data-operation.raw_queue_smart.queuesmart_mp3_enriched",
+    "hist_raw_table": "prd-utpbi-data-operation.adf_speech_analytics.hist_queuesmart_mp3_gen_ia_process_data_raw",
+    "hist_prd_table": "prd-utpbi-data-operation.adf_speech_analytics.hist_queuesmart_mp3_gen_ia_process_data_prd"
+  },
+  "job": {
+    "manifest_prefix": "state/stt_manifests"
+  },
+  "stt": {
+    "model": "chirp_3",
+    "language_codes": ["es-US"],
+    "min_speaker_count": 2,
+    "max_speaker_count": 2,
+    "recognizer_id": "_"
+  }
+}

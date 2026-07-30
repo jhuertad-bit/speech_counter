@@ -1,0 +1,74 @@
+# Pipeline: Cloud Run Job STT Chirp 3 + diarización (qsmart_transcribe).
+#
+# Variables de ambiente (dev/prd): ACTIVADOR → Variables de sustitución
+#   Obligatorias: _PROJECT_ID, _JOB_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME
+#   Opcionales:   _LOCATION, _SOURCE_DIR, _MEMORY, _CPU, _TASK_TIMEOUT,
+#                 _MAX_RETRIES, _PARALLELISM, _CONFIG_PATH,
+#                 _STT_LOCATION, _STT_MODEL, _MANIFEST_PREFIX,
+#                 _ENRICHED_TABLE, _HIST_RAW_TABLE, _HIST_PRD_TABLE,
+#                 _BQ_LOCATION
+#
+# Ejemplo prd:
+#   _PROJECT_ID=prd-utpbi-data-operation
+#   _JOB_NAME=prd-utpbi-qsmart-transcribe
+#   _SERVICE_ACCOUNT=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+#   _BUCKET_NAME=prd-utp-stg-queuesmart
+#   _LOCATION=us-central1
+#   _SOURCE_DIR=qsmart_transcribe/src
+#   _PARALLELISM=10
+#   _TASK_TIMEOUT=3600s
+#   _MEMORY=1Gi
+#
+# La SA del Job necesita:
+#   - roles/storage.objectAdmin (o lectura audios + R/W manifiestos) en _BUCKET_NAME
+#   - BigQuery Data Viewer/Editor en raw_queue_smart + adf_speech_analytics
+#   - roles/speech.client (Speech-to-Text API v2)
+#
+# Orquestación: Cloud Workflows (queuesmart/workflows/daily_pipeline.yaml)
+#   → no crear Scheduler apuntando a este Job.
+
+substitutions:
+  _LOCATION: 'us-central1'
+  _SOURCE_DIR: 'qsmart_transcribe/src'
+  _MEMORY: '1Gi'
+  _CPU: '1'
+  _TASK_TIMEOUT: '3600s'
+  _MAX_RETRIES: '1'
+  _PARALLELISM: '10'
+  _CONFIG_PATH: '/app/config/config.json'
+  _STT_LOCATION: 'us'
+  _STT_MODEL: 'chirp_3'
+  _MANIFEST_PREFIX: 'state/stt_manifests'
+  _BQ_LOCATION: 'US'
+  _ENRICHED_TABLE: 'prd-utpbi-data-operation.raw_queue_smart.queuesmart_mp3_enriched'
+  _HIST_RAW_TABLE: 'prd-utpbi-data-operation.adf_speech_analytics.hist_queuesmart_mp3_gen_ia_process_data_raw'
+  _HIST_PRD_TABLE: 'prd-utpbi-data-operation.adf_speech_analytics.hist_queuesmart_mp3_gen_ia_process_data_prd'
+
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - 'qsmart_transcribe/scripts/cloudbuild_deploy.sh'
+    env:
+      - '_PROJECT_ID=${_PROJECT_ID}'
+      - '_JOB_NAME=${_JOB_NAME}'
+      - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '_BUCKET_NAME=${_BUCKET_NAME}'
+      - '_LOCATION=${_LOCATION}'
+      - '_SOURCE_DIR=${_SOURCE_DIR}'
+      - '_MEMORY=${_MEMORY}'
+      - '_CPU=${_CPU}'
+      - '_TASK_TIMEOUT=${_TASK_TIMEOUT}'
+      - '_MAX_RETRIES=${_MAX_RETRIES}'
+      - '_PARALLELISM=${_PARALLELISM}'
+      - '_CONFIG_PATH=${_CONFIG_PATH}'
+      - '_STT_LOCATION=${_STT_LOCATION}'
+      - '_STT_MODEL=${_STT_MODEL}'
+      - '_MANIFEST_PREFIX=${_MANIFEST_PREFIX}'
+      - '_BQ_LOCATION=${_BQ_LOCATION}'
+      - '_ENRICHED_TABLE=${_ENRICHED_TABLE}'
+      - '_HIST_RAW_TABLE=${_HIST_RAW_TABLE}'
+      - '_HIST_PRD_TABLE=${_HIST_PRD_TABLE}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

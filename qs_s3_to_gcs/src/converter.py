@@ -1,8 +1,9 @@
 """Detección de formato (ffprobe) y transcodificación condicional → FLAC o pass-through.
 
 Speech-to-Text v2 (Chirp) soporta nativamente: webm/opus, ogg/opus, flac, wav, mp3.
-Si el contenedor ya es compatible → pass-through (sin re-encode).
-Si no → FLAC + loudnorm + banda telefónica (sin pérdida, mejor para STT que MP3).
+Por defecto (force_transcode_flac=True) → siempre FLAC + loudnorm suave
+(mejor para STT en counter / frases a bajo volumen).
+Con force_transcode_flac=False → pass-through si el contenedor ya es nativo STT.
 
 Importante: el prefijo GCS / nombres de tablas pueden seguir diciendo "mp3"
 (etiquetas heredadas). El objeto en GCS usa la extensión real (.webm, .flac, …).
@@ -26,8 +27,9 @@ SUPPORTED_EXTENSIONS = frozenset({
 # Extensiones posibles ya existentes en GCS (legacy .mp3 + formatos reales).
 KNOWN_STORAGE_EXTS = (".webm", ".ogg", ".opus", ".flac", ".wav", ".mp3", ".m4a")
 
-# Loudnorm EBU R128 + banda voz telefónica (requisito STT / call center).
-DEFAULT_VOICE_FILTER = "highpass=f=200,lowpass=f=3400,loudnorm=I=-16:TP=-1.5:LRA=11"
+# Loudnorm EBU R128 + highpass suave (sin lowpass agresivo: en MP3/comprimidos
+# lowpass=3400 recortaba claridad y omitía fonemas). Counter abierto = volumen bajo.
+DEFAULT_VOICE_FILTER = "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11"
 DEFAULT_NOISE_FILTER = "afftdn"
 
 # Contenedores/codecs que Chirp/STT suelen aceptar sin re-encode.
@@ -245,6 +247,12 @@ def transcode_to_flac(
     }
 
 
-def decide_action(probe: ProbeInfo) -> str:
-    """pass_through | transcode_flac"""
+def decide_action(probe: ProbeInfo, *, force_transcode_flac: bool = True) -> str:
+    """pass_through | transcode_flac
+
+    Por defecto siempre FLAC+loudnorm (mejor STT en counter / volumen bajo).
+    force_transcode_flac=False conserva el pass-through de formatos nativos.
+    """
+    if force_transcode_flac:
+        return "transcode_flac"
     return "pass_through" if is_stt_native(probe) else "transcode_flac"

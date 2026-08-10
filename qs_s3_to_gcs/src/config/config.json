@@ -32,11 +32,13 @@
     "treat_unconvertible_as_skip": true
   },
   "audio": {
-    "voice_filter": "highpass=f=200,lowpass=f=3400,loudnorm=I=-16:TP=-1.5:LRA=11",
+    "force_transcode_flac": true,
+    "voice_filter": "highpass=f=80,loudnorm=I=-16:TP=-1.5:LRA=11",
     "enable_noise_reduction": false,
     "noise_filter": "afftdn",
     "ffmpeg_timeout_seconds": 300,
-    "io_chunk_size_bytes": 8388608
+    "io_chunk_size_bytes": 8388608,
+    "note": "Siempre FLAC+loudnorm para STT (counter abierto). afftdn opcional vía enable_noise_reduction."
   },
   "batch": {
     "max_files": 500,

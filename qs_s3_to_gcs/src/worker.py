@@ -1,4 +1,4 @@
-"""Procesa un ítem del manifiesto: S3 → (pass-through | FLAC) → GCS → BigQuery."""
+"""Procesa un ítem del manifiesto: S3 → FLAC+loudnorm (default) → GCS → BigQuery."""
 
 from __future__ import annotations
 
@@ -70,6 +70,10 @@ def find_existing_gcs_object(
     return None
 
 
+def _is_flac_key(gcs_key: str) -> bool:
+    return gcs_key.lower().endswith(".flac")
+
+
 def process_one_candidate(
     *,
     config: dict[str, Any],
@@ -95,6 +99,8 @@ def process_one_candidate(
     date_folder_format = sync_cfg.get("gcs_date_folder_format", "%Y-%m-%d")
     skip_if_exists = bool(sync_cfg.get("skip_if_exists_in_gcs", True))
     filename_regex = sync_cfg.get("filename_regex")
+    # Default True: siempre loudnorm→FLAC (mejora STT counter / frases bajas).
+    force_transcode_flac = bool(audio_cfg.get("force_transcode_flac", True))
 
     s3_key = item["key"]
     source_name = item.get("file_name") or os.path.basename(s3_key)
@@ -120,38 +126,51 @@ def process_one_candidate(
             date_folder_format=date_folder_format,
         )
         if existing_key:
-            print(f"[worker] SKIP already_in_gcs gs://{gcs_bucket}/{existing_key}")
-            stored_name = os.path.basename(existing_key)
-            catalog_parsed = {**parsed, "file_name": stored_name}
-            result["gcs_key"] = existing_key
-            result["status"] = "already_in_gcs"
-            result["action"] = "skip_exists"
-            if bool(bq_cfg.get("enabled", True)) and bool(bq_cfg.get("catalog_existing_in_gcs", True)):
-                row = build_catalog_row(
-                    parsed=catalog_parsed,
-                    gcs_bucket=gcs_bucket,
-                    gcs_key=existing_key,
-                    s3_bucket=s3_bucket,
-                    s3_key=s3_key,
-                    file_size_bytes=int(item.get("size") or 0),
-                    sync_mode=sync_mode,
-                    processed_at=processed_at,
-                    convert_method="already_in_gcs",
-                    duration_seconds=None,
-                    actual_format=None,
-                    encoding=None,
+            # Si forzamos FLAC+loudnorm y en GCS solo hay legacy (mp3/webm/...),
+            # no skipear: regenerar .flac para STT.
+            if force_transcode_flac and not _is_flac_key(existing_key):
+                print(
+                    f"[worker] UPGRADE legacy→flac (exists gs://{gcs_bucket}/{existing_key})"
                 )
-                inserted = catalog_files(
-                    project_id=gcp_cfg["project_id"],
-                    dataset_id=bq_cfg.get("dataset_id", "raw_queue_smart"),
-                    table_id=bq_cfg.get("table_id", "hist_queesmart_mp3_catalog"),
-                    rows=[row],
-                    location=bq_cfg.get("location", "US"),
-                )
-                result["bq_inserted"] = inserted
-            return result
+            else:
+                print(f"[worker] SKIP already_in_gcs gs://{gcs_bucket}/{existing_key}")
+                stored_name = os.path.basename(existing_key)
+                catalog_parsed = {**parsed, "file_name": stored_name}
+                result["gcs_key"] = existing_key
+                result["status"] = "already_in_gcs"
+                result["action"] = "skip_exists"
+                if bool(bq_cfg.get("enabled", True)) and bool(
+                    bq_cfg.get("catalog_existing_in_gcs", True)
+                ):
+                    row = build_catalog_row(
+                        parsed=catalog_parsed,
+                        gcs_bucket=gcs_bucket,
+                        gcs_key=existing_key,
+                        s3_bucket=s3_bucket,
+                        s3_key=s3_key,
+                        file_size_bytes=int(item.get("size") or 0),
+                        sync_mode=sync_mode,
+                        processed_at=processed_at,
+                        convert_method="already_in_gcs",
+                        duration_seconds=None,
+                        actual_format=None,
+                        encoding=None,
+                    )
+                    inserted = catalog_files(
+                        project_id=gcp_cfg["project_id"],
+                        dataset_id=bq_cfg.get("dataset_id", "raw_queue_smart"),
+                        table_id=bq_cfg.get("table_id", "hist_queesmart_mp3_catalog"),
+                        rows=[row],
+                        location=bq_cfg.get("location", "US"),
+                    )
+                    result["bq_inserted"] = inserted
+                return result
 
-    voice_filter = str(audio_cfg.get("voice_filter") or audio_cfg.get("loudnorm_filter") or DEFAULT_VOICE_FILTER)
+    voice_filter = str(
+        audio_cfg.get("voice_filter")
+        or audio_cfg.get("loudnorm_filter")
+        or DEFAULT_VOICE_FILTER
+    )
     enable_nr = bool(audio_cfg.get("enable_noise_reduction", False))
     noise_filter = str(audio_cfg.get("noise_filter") or DEFAULT_NOISE_FILTER)
     timeout = int(audio_cfg.get("ffmpeg_timeout_seconds", 300))
@@ -177,7 +196,7 @@ def process_one_candidate(
         )
 
         probe = probe_media(local_src, timeout=min(60, timeout))
-        action = decide_action(probe)
+        action = decide_action(probe, force_transcode_flac=force_transcode_flac)
         out_ext = extension_for_action(action, probe, source_name)
         stored_name = storage_file_name(stem, out_ext)
         gcs_key = gcs_key_for_audio(
@@ -192,7 +211,7 @@ def process_one_candidate(
         print(
             f"[worker] probe format={probe.actual_format} "
             f"duration_s={probe.duration_seconds} → action={action} "
-            f"gcs_ext={out_ext}"
+            f"gcs_ext={out_ext} force_flac={force_transcode_flac}"
         )
 
         # Por si otro task subió entre el check previo y ahora
@@ -260,32 +279,25 @@ def process_one_candidate(
             location=bq_cfg.get("location", "US"),
         )
 
-    result.update(
-        {
-            "status": "ok",
-            "action": action,
-            "actual_format": actual_format,
-            "encoding": encoding,
-            "convert_method": convert_method,
-            "bytes": size,
-            "duration_seconds": duration_seconds,
-            "bq_inserted": inserted,
-        }
-    )
+    result["status"] = "ok"
+    result["action"] = action
+    result["convert_method"] = convert_method
+    result["actual_format"] = actual_format
+    result["bytes"] = size
+    result["bq_inserted"] = inserted
     return result
 
 
 def _guess_content_type(probe) -> str:
-    fmt = probe.format_name or ""
-    codec = probe.codec_name or ""
+    fmt = (probe.format_name or "").lower()
     if "webm" in fmt or "matroska" in fmt:
         return "audio/webm"
     if "ogg" in fmt:
         return "audio/ogg"
     if "flac" in fmt:
         return "audio/flac"
-    if "wav" in fmt or "w64" in fmt:
+    if "wav" in fmt:
         return "audio/wav"
-    if "mp3" in fmt or codec == "mp3":
+    if "mp3" in fmt or probe.codec_name == "mp3":
         return "audio/mpeg"
     return "application/octet-stream"

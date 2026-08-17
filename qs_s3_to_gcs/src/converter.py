@@ -227,6 +227,8 @@ def transcode_to_flac(
         audio_filter,
         "-c:a",
         "flac",
+        "-f",
+        "flac",
         "-y",
         output_path,
     ]

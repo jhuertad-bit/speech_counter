@@ -184,7 +184,6 @@ def process_one_candidate(
     with tempfile.TemporaryDirectory(prefix="qs_audio_") as tmpdir:
         _, src_ext = os.path.splitext(source_name)
         local_src = os.path.join(tmpdir, f"source{src_ext or '.bin'}")
-        local_out = os.path.join(tmpdir, "output.bin")
 
         print(f"[worker] download s3://{s3_bucket}/{s3_key} → disk (streaming)")
         stream_s3_to_file(
@@ -198,6 +197,7 @@ def process_one_candidate(
         probe = probe_media(local_src, timeout=min(60, timeout))
         action = decide_action(probe, force_transcode_flac=force_transcode_flac)
         out_ext = extension_for_action(action, probe, source_name)
+        local_out = os.path.join(tmpdir, f"output{out_ext}")
         stored_name = storage_file_name(stem, out_ext)
         gcs_key = gcs_key_for_audio(
             stored_name,

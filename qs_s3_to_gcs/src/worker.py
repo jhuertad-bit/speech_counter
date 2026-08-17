@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import math
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from typing import Any
@@ -15,12 +17,14 @@ from converter import (
     DEFAULT_NOISE_FILTER,
     DEFAULT_VOICE_FILTER,
     KNOWN_STORAGE_EXTS,
+    MAX_STT_SEGMENT_SECONDS,
     build_audio_filter,
     decide_action,
     extension_for_action,
     file_stem,
     probe_media,
     storage_file_name,
+    transcode_segment_to_flac,
     transcode_to_flac,
 )
 from media_io import copy_file, stream_file_to_gcs, stream_s3_to_file
@@ -112,6 +116,184 @@ def _delete_non_flac_originals(
         except Exception as exc:  # noqa: BLE001
             print(f"[worker] WARN no se pudo borrar gs://{bucket}/{key}: {exc}")
     return deleted
+
+
+def _is_segment_file(file_name: str) -> bool:
+    return bool(re.search(r"_s\d+\.", file_name, re.IGNORECASE))
+
+
+def _segment_stem(stem: str, index: int) -> str:
+    return f"{stem}_s{index:02d}"
+
+
+def _has_stt_segments_in_gcs(
+    gcs_client: storage.Client,
+    *,
+    bucket: str,
+    stem: str,
+    file_date,
+    gcs_prefix: str,
+    date_folder_format: str,
+) -> bool:
+    key = gcs_key_for_audio(
+        storage_file_name(_segment_stem(stem, 1), ".flac"),
+        file_date,
+        gcs_prefix,
+        date_folder_format=date_folder_format,
+    )
+    return gcs_blob_exists(gcs_client, bucket, key)
+
+
+def _delete_monolithic_flac(
+    gcs_client: storage.Client,
+    *,
+    bucket: str,
+    stem: str,
+    file_date,
+    gcs_prefix: str,
+    date_folder_format: str,
+) -> None:
+    mono_key = gcs_key_for_audio(
+        storage_file_name(stem, ".flac"),
+        file_date,
+        gcs_prefix,
+        date_folder_format=date_folder_format,
+    )
+    if not _is_segment_file(os.path.basename(mono_key)):
+        try:
+            _delete_gcs_blob(gcs_client, bucket, mono_key)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[worker] WARN no se pudo borrar monolito {mono_key}: {exc}")
+
+
+def _upload_stt_segments(
+    *,
+    config: dict[str, Any],
+    gcs_client: storage.Client,
+    local_src: str,
+    probe,
+    stem: str,
+    parsed: dict[str, Any],
+    source_name: str,
+    s3_bucket: str,
+    s3_key: str,
+    gcs_bucket: str,
+    gcs_prefix: str,
+    date_folder_format: str,
+    sync_mode: str,
+    processed_at: datetime,
+    audio_filter: str,
+    timeout: int,
+    chunk: int,
+    item: dict[str, Any],
+    existing_key: str | None,
+) -> dict[str, Any]:
+    """Parte audio > MAX_STT_SEGMENT_SECONDS en FLACs _s01, _s02… para ML.TRANSCRIBE."""
+    total = float(probe.duration_seconds or 0)
+    if total <= MAX_STT_SEGMENT_SECONDS:
+        raise ValueError("_upload_stt_segments llamado con audio corto")
+
+    segment_count = max(1, math.ceil(total / MAX_STT_SEGMENT_SECONDS))
+    print(
+        f"[worker] STT split {total:.0f}s → {segment_count} segmentos "
+        f"de ≤{MAX_STT_SEGMENT_SECONDS}s"
+    )
+
+    uploaded: list[dict[str, Any]] = []
+    total_inserted = 0
+    parent_source = source_name
+
+    for idx in range(1, segment_count + 1):
+        start_sec = (idx - 1) * MAX_STT_SEGMENT_SECONDS
+        seg_duration = min(MAX_STT_SEGMENT_SECONDS, total - start_sec)
+        seg_stem = _segment_stem(stem, idx)
+        local_out = os.path.join(
+            os.path.dirname(local_src),
+            f"segment_{idx:02d}.flac",
+        )
+        meta = transcode_segment_to_flac(
+            local_src,
+            local_out,
+            start_sec=start_sec,
+            duration_sec=seg_duration,
+            audio_filter=audio_filter,
+            timeout=timeout,
+        )
+        stored_name = storage_file_name(seg_stem, ".flac")
+        gcs_key = gcs_key_for_audio(
+            stored_name,
+            parsed["file_date"],
+            gcs_prefix,
+            date_folder_format=date_folder_format,
+        )
+        size = stream_file_to_gcs(
+            gcs_client,
+            local_path=local_out,
+            bucket=gcs_bucket,
+            blob_name=gcs_key,
+            content_type="audio/flac",
+            chunk_size=chunk,
+        )
+        seg_parsed = {
+            **parsed,
+            "file_name": stored_name,
+            "source_file_name": parent_source,
+            "segment_index": idx,
+            "segment_count": segment_count,
+            "segment_offset_seconds": start_sec,
+        }
+        inserted = _write_catalog(
+            config=config,
+            parsed=seg_parsed,
+            gcs_key=gcs_key,
+            s3_bucket=s3_bucket,
+            s3_key=s3_key,
+            file_size_bytes=size,
+            sync_mode=sync_mode,
+            processed_at=processed_at,
+            convert_method=f"ffmpeg_flac_segment_{idx}_of_{segment_count}",
+            duration_seconds=float(meta.get("duration_seconds") or seg_duration),
+            actual_format=str(meta.get("actual_format") or "flac"),
+            encoding="flac",
+        )
+        total_inserted += inserted
+        uploaded.append({"gcs_key": gcs_key, "segment_index": idx, "bytes": size})
+        print(f"[worker] segment {idx}/{segment_count} OK gs://{gcs_bucket}/{gcs_key}")
+
+    _delete_monolithic_flac(
+        gcs_client,
+        bucket=gcs_bucket,
+        stem=stem,
+        file_date=parsed["file_date"],
+        gcs_prefix=gcs_prefix,
+        date_folder_format=date_folder_format,
+    )
+    if existing_key and existing_key != uploaded[0]["gcs_key"]:
+        try:
+            _delete_gcs_blob(gcs_client, gcs_bucket, existing_key)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[worker] WARN no se pudo borrar legacy {existing_key}: {exc}")
+    _delete_non_flac_originals(
+        gcs_client,
+        bucket=gcs_bucket,
+        stem=stem,
+        file_date=parsed["file_date"],
+        gcs_prefix=gcs_prefix,
+        date_folder_format=date_folder_format,
+        keep_key=uploaded[0]["gcs_key"],
+    )
+
+    return {
+        "s3_key": s3_key,
+        "source_file_name": parent_source,
+        "status": "ok",
+        "action": "stt_split",
+        "segment_count": segment_count,
+        "gcs_key": uploaded[0]["gcs_key"],
+        "segments": uploaded,
+        "bq_inserted": total_inserted,
+        "convert_method": f"ffmpeg_flac_split_{segment_count}",
+    }
 
 
 def _write_catalog(
@@ -211,8 +393,26 @@ def process_one_candidate(
             date_folder_format=date_folder_format,
         )
         if existing_key:
+            if _has_stt_segments_in_gcs(
+                gcs_client,
+                bucket=gcs_bucket,
+                stem=stem,
+                file_date=parsed["file_date"],
+                gcs_prefix=gcs_prefix,
+                date_folder_format=date_folder_format,
+            ):
+                seg_key = gcs_key_for_audio(
+                    storage_file_name(_segment_stem(stem, 1), ".flac"),
+                    parsed["file_date"],
+                    gcs_prefix,
+                    date_folder_format=date_folder_format,
+                )
+                print(f"[worker] SKIP segments exist gs://{gcs_bucket}/{seg_key}")
+                result["gcs_key"] = seg_key
+                result["status"] = "already_in_gcs"
+                result["action"] = "skip_segments_exist"
+                return result
             if force_transcode_flac and not _is_flac_key(existing_key):
-                # Catalogar el original ANTES del FLAC: si hay OOM, consolidate igual lo ve.
                 print(
                     f"[worker] UPGRADE legacy→flac (exists gs://{gcs_bucket}/{existing_key})"
                 )
@@ -229,24 +429,36 @@ def process_one_candidate(
                 )
                 result["gcs_key"] = existing_key
                 result["bq_inserted"] = inserted
-            else:
-                print(f"[worker] SKIP already_in_gcs gs://{gcs_bucket}/{existing_key}")
-                result["gcs_key"] = existing_key
-                result["status"] = "already_in_gcs"
-                result["action"] = "skip_exists"
-                if bool(bq_cfg.get("catalog_existing_in_gcs", True)):
-                    result["bq_inserted"] = _write_catalog(
-                        config=config,
-                        parsed=parsed,
-                        gcs_key=existing_key,
-                        s3_bucket=s3_bucket,
-                        s3_key=s3_key,
-                        file_size_bytes=int(item.get("size") or 0),
-                        sync_mode=sync_mode,
-                        processed_at=processed_at,
-                        convert_method="already_in_gcs",
+            elif _is_flac_key(existing_key) and not _is_segment_file(source_name):
+                known_dur = float(item.get("duration_seconds") or 0)
+                if known_dur > MAX_STT_SEGMENT_SECONDS:
+                    print(
+                        f"[worker] monolito {known_dur:.0f}s — re-split "
+                        f"gs://{gcs_bucket}/{existing_key}"
                     )
-                return result
+                elif known_dur > 0:
+                    print(f"[worker] SKIP already_in_gcs gs://{gcs_bucket}/{existing_key}")
+                    result["gcs_key"] = existing_key
+                    result["status"] = "already_in_gcs"
+                    result["action"] = "skip_exists"
+                    if bool(bq_cfg.get("catalog_existing_in_gcs", True)):
+                        result["bq_inserted"] = _write_catalog(
+                            config=config,
+                            parsed=parsed,
+                            gcs_key=existing_key,
+                            s3_bucket=s3_bucket,
+                            s3_key=s3_key,
+                            file_size_bytes=int(item.get("size") or 0),
+                            sync_mode=sync_mode,
+                            processed_at=processed_at,
+                            convert_method="already_in_gcs",
+                        )
+                    return result
+                else:
+                    print(
+                        f"[worker] monolito flac sin duration en manifiesto — "
+                        f"reprocesar gs://{gcs_bucket}/{existing_key}"
+                    )
 
     voice_filter = str(
         audio_cfg.get("voice_filter")
@@ -324,6 +536,34 @@ def process_one_candidate(
                 convert_method="already_in_gcs",
             )
             return result
+
+        total_duration = float(probe.duration_seconds) if probe and probe.duration_seconds else None
+        if (
+            action == "transcode_flac"
+            and total_duration is not None
+            and total_duration > MAX_STT_SEGMENT_SECONDS
+        ):
+            return _upload_stt_segments(
+                config=config,
+                gcs_client=gcs_client,
+                local_src=local_src,
+                probe=probe,
+                stem=stem,
+                parsed=parsed,
+                source_name=source_name,
+                s3_bucket=s3_bucket,
+                s3_key=s3_key,
+                gcs_bucket=gcs_bucket,
+                gcs_prefix=gcs_prefix,
+                date_folder_format=date_folder_format,
+                sync_mode=sync_mode,
+                processed_at=processed_at,
+                audio_filter=audio_filter,
+                timeout=timeout,
+                chunk=chunk,
+                item=item,
+                existing_key=existing_key,
+            )
 
         used_fallback = False
         if action == "pass_through":

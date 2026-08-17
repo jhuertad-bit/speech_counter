@@ -93,9 +93,12 @@ def build_catalog_row(
         "file_size_bytes": file_size_bytes,
         "duration_seconds": duration_seconds,
         "sync_mode": sync_mode,
-        "convert_method": convert_method,
-        "actual_format": actual_format,
-        "encoding": encoding,
+    "convert_method": convert_method,
+    "actual_format": actual_format,
+    "encoding": encoding,
+    "segment_index": parsed.get("segment_index"),
+    "segment_count": parsed.get("segment_count"),
+    "segment_offset_seconds": parsed.get("segment_offset_seconds"),
     }
 
 

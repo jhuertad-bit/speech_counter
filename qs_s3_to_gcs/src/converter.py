@@ -202,6 +202,71 @@ def build_audio_filter(
     return ",".join(parts)
 
 
+# ML.TRANSCRIBE (Chirp + word offsets) ~20 min; BQ documenta tope 30 min por archivo.
+MAX_STT_SEGMENT_SECONDS = 1080  # 18 min — margen seguro
+
+
+def transcode_segment_to_flac(
+    input_path: str,
+    output_path: str,
+    *,
+    start_sec: float,
+    duration_sec: float,
+    audio_filter: str = DEFAULT_VOICE_FILTER,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    """Recorte + FLAC loudnorm para un segmento (audios largos Counter)."""
+    if duration_sec <= 0:
+        raise ValueError(f"duration_sec inválido: {duration_sec}")
+
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-err_detect",
+        "ignore_err",
+        "-threads",
+        "1",
+        "-ss",
+        str(start_sec),
+        "-t",
+        str(duration_sec),
+        "-i",
+        input_path,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-af",
+        audio_filter,
+        "-c:a",
+        "flac",
+        "-f",
+        "flac",
+        "-y",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or "ffmpeg segment flac failed")
+    if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        raise RuntimeError("FLAC segment output is empty")
+
+    out_probe = probe_media(output_path, timeout=min(60, timeout))
+    return {
+        "method": "ffmpeg_flac_loudnorm_segment",
+        "audio_filter": audio_filter,
+        "output_size_bytes": os.path.getsize(output_path),
+        "duration_seconds": out_probe.duration_seconds,
+        "actual_format": out_probe.actual_format,
+        "content_type": "audio/flac",
+        "segment_start_sec": start_sec,
+        "segment_duration_sec": duration_sec,
+    }
+
+
 def transcode_to_flac(
     input_path: str,
     output_path: str,

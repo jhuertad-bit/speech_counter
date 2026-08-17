@@ -74,6 +74,90 @@ def _is_flac_key(gcs_key: str) -> bool:
     return gcs_key.lower().endswith(".flac")
 
 
+def _delete_gcs_blob(gcs_client: storage.Client, bucket: str, gcs_key: str) -> bool:
+    blob = gcs_client.bucket(bucket).blob(gcs_key)
+    if not blob.exists():
+        return False
+    blob.delete()
+    print(f"[worker] DELETE original gs://{bucket}/{gcs_key}")
+    return True
+
+
+def _delete_non_flac_originals(
+    gcs_client: storage.Client,
+    *,
+    bucket: str,
+    stem: str,
+    file_date,
+    gcs_prefix: str,
+    date_folder_format: str,
+    keep_key: str,
+) -> list[str]:
+    """Tras un FLAC OK, borra webm/mp3/… del mismo stem para no duplicar espacio."""
+    deleted: list[str] = []
+    for ext in KNOWN_STORAGE_EXTS:
+        if ext == ".flac":
+            continue
+        key = gcs_key_for_audio(
+            storage_file_name(stem, ext),
+            file_date,
+            gcs_prefix,
+            date_folder_format=date_folder_format,
+        )
+        if key == keep_key:
+            continue
+        try:
+            if _delete_gcs_blob(gcs_client, bucket, key):
+                deleted.append(key)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[worker] WARN no se pudo borrar gs://{bucket}/{key}: {exc}")
+    return deleted
+
+
+def _write_catalog(
+    *,
+    config: dict[str, Any],
+    parsed: dict[str, Any],
+    gcs_key: str,
+    s3_bucket: str,
+    s3_key: str,
+    file_size_bytes: int,
+    sync_mode: str,
+    processed_at: datetime,
+    convert_method: str,
+    duration_seconds: float | None = None,
+    actual_format: str | None = None,
+    encoding: str | None = None,
+) -> int:
+    gcp_cfg = config["gcp"]
+    bq_cfg = config.get("bigquery", {})
+    if not bool(bq_cfg.get("enabled", True)):
+        return 0
+    stored_name = os.path.basename(gcs_key)
+    catalog_parsed = {**parsed, "file_name": stored_name}
+    row = build_catalog_row(
+        parsed=catalog_parsed,
+        gcs_bucket=gcp_cfg["bucket_name"],
+        gcs_key=gcs_key,
+        s3_bucket=s3_bucket,
+        s3_key=s3_key,
+        file_size_bytes=file_size_bytes,
+        sync_mode=sync_mode,
+        processed_at=processed_at,
+        convert_method=convert_method,
+        duration_seconds=duration_seconds,
+        actual_format=actual_format,
+        encoding=encoding,
+    )
+    return catalog_files(
+        project_id=gcp_cfg["project_id"],
+        dataset_id=bq_cfg.get("dataset_id", "raw_queue_smart"),
+        table_id=bq_cfg.get("table_id", "hist_queesmart_mp3_catalog"),
+        rows=[row],
+        location=bq_cfg.get("location", "US"),
+    )
+
+
 def process_one_candidate(
     *,
     config: dict[str, Any],
@@ -85,7 +169,7 @@ def process_one_candidate(
     """
     Procesa un candidato del manifiesto.
 
-    Retorna dict con status: ok | already_in_gcs | skipped_corrupt | error
+    Retorna dict con status: ok | already_in_gcs | transcode_fallback | skipped_corrupt | error
     """
     aws_cfg = config["aws"]
     gcp_cfg = config["gcp"]
@@ -115,6 +199,7 @@ def process_one_candidate(
         "source_file_name": source_name,
         "status": "error",
     }
+    existing_key: str | None = None
 
     if skip_if_exists:
         existing_key = find_existing_gcs_object(
@@ -126,25 +211,33 @@ def process_one_candidate(
             date_folder_format=date_folder_format,
         )
         if existing_key:
-            # Si forzamos FLAC+loudnorm y en GCS solo hay legacy (mp3/webm/...),
-            # no skipear: regenerar .flac para STT.
             if force_transcode_flac and not _is_flac_key(existing_key):
+                # Catalogar el original ANTES del FLAC: si hay OOM, consolidate igual lo ve.
                 print(
                     f"[worker] UPGRADE legacy→flac (exists gs://{gcs_bucket}/{existing_key})"
                 )
+                inserted = _write_catalog(
+                    config=config,
+                    parsed=parsed,
+                    gcs_key=existing_key,
+                    s3_bucket=s3_bucket,
+                    s3_key=s3_key,
+                    file_size_bytes=int(item.get("size") or 0),
+                    sync_mode=sync_mode,
+                    processed_at=processed_at,
+                    convert_method="source_pending_flac",
+                )
+                result["gcs_key"] = existing_key
+                result["bq_inserted"] = inserted
             else:
                 print(f"[worker] SKIP already_in_gcs gs://{gcs_bucket}/{existing_key}")
-                stored_name = os.path.basename(existing_key)
-                catalog_parsed = {**parsed, "file_name": stored_name}
                 result["gcs_key"] = existing_key
                 result["status"] = "already_in_gcs"
                 result["action"] = "skip_exists"
-                if bool(bq_cfg.get("enabled", True)) and bool(
-                    bq_cfg.get("catalog_existing_in_gcs", True)
-                ):
-                    row = build_catalog_row(
-                        parsed=catalog_parsed,
-                        gcs_bucket=gcs_bucket,
+                if bool(bq_cfg.get("catalog_existing_in_gcs", True)):
+                    result["bq_inserted"] = _write_catalog(
+                        config=config,
+                        parsed=parsed,
                         gcs_key=existing_key,
                         s3_bucket=s3_bucket,
                         s3_key=s3_key,
@@ -152,18 +245,7 @@ def process_one_candidate(
                         sync_mode=sync_mode,
                         processed_at=processed_at,
                         convert_method="already_in_gcs",
-                        duration_seconds=None,
-                        actual_format=None,
-                        encoding=None,
                     )
-                    inserted = catalog_files(
-                        project_id=gcp_cfg["project_id"],
-                        dataset_id=bq_cfg.get("dataset_id", "raw_queue_smart"),
-                        table_id=bq_cfg.get("table_id", "hist_queesmart_mp3_catalog"),
-                        rows=[row],
-                        location=bq_cfg.get("location", "US"),
-                    )
-                    result["bq_inserted"] = inserted
                 return result
 
     voice_filter = str(
@@ -194,9 +276,22 @@ def process_one_candidate(
             chunk_size=chunk,
         )
 
-        probe = probe_media(local_src, timeout=min(60, timeout))
-        action = decide_action(probe, force_transcode_flac=force_transcode_flac)
-        out_ext = extension_for_action(action, probe, source_name)
+        try:
+            probe = probe_media(local_src, timeout=min(60, timeout))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[worker] probe FAIL → passthrough original: {exc}")
+            probe = None
+
+        action = (
+            "pass_through"
+            if probe is None
+            else decide_action(probe, force_transcode_flac=force_transcode_flac)
+        )
+        out_ext = (
+            (src_ext or ".bin")
+            if probe is None
+            else extension_for_action(action, probe, source_name)
+        )
         local_out = os.path.join(tmpdir, f"output{out_ext}")
         stored_name = storage_file_name(stem, out_ext)
         gcs_key = gcs_key_for_audio(
@@ -205,42 +300,94 @@ def process_one_candidate(
             gcs_prefix,
             date_folder_format=date_folder_format,
         )
-        catalog_parsed = {**parsed, "file_name": stored_name}
         result["gcs_key"] = gcs_key
 
         print(
-            f"[worker] probe format={probe.actual_format} "
-            f"duration_s={probe.duration_seconds} → action={action} "
+            f"[worker] probe format={probe.actual_format if probe else 'n/a'} "
+            f"duration_s={probe.duration_seconds if probe else None} → action={action} "
             f"gcs_ext={out_ext} force_flac={force_transcode_flac}"
         )
 
-        # Por si otro task subió entre el check previo y ahora
         if skip_if_exists and gcs_blob_exists(gcs_client, gcs_bucket, gcs_key):
             print(f"[worker] SKIP already_in_gcs (post-probe) gs://{gcs_bucket}/{gcs_key}")
             result["status"] = "already_in_gcs"
             result["action"] = "skip_exists"
+            result["bq_inserted"] = _write_catalog(
+                config=config,
+                parsed=parsed,
+                gcs_key=gcs_key,
+                s3_bucket=s3_bucket,
+                s3_key=s3_key,
+                file_size_bytes=int(item.get("size") or 0),
+                sync_mode=sync_mode,
+                processed_at=processed_at,
+                convert_method="already_in_gcs",
+            )
             return result
 
+        used_fallback = False
         if action == "pass_through":
             copy_file(local_src, local_out, chunk_size=chunk)
-            content_type = _guess_content_type(probe)
-            convert_method = f"passthrough_{probe.actual_format.replace('/', '_')}"
-            duration_seconds = probe.duration_seconds
-            actual_format = probe.actual_format
+            content_type = _guess_content_type(probe) if probe else "application/octet-stream"
+            convert_method = (
+                f"passthrough_{probe.actual_format.replace('/', '_')}"
+                if probe
+                else "passthrough_unprobed"
+            )
+            duration_seconds = probe.duration_seconds if probe else None
+            actual_format = probe.actual_format if probe else None
             encoding = "passthrough"
         else:
             print(f"[worker] transcode → FLAC filter={audio_filter}")
-            meta = transcode_to_flac(
-                local_src,
-                local_out,
-                audio_filter=audio_filter,
-                timeout=timeout,
-            )
-            content_type = str(meta["content_type"])
-            convert_method = str(meta["method"])
-            duration_seconds = meta.get("duration_seconds")
-            actual_format = str(meta.get("actual_format") or "flac")
-            encoding = "flac"
+            try:
+                meta = transcode_to_flac(
+                    local_src,
+                    local_out,
+                    audio_filter=audio_filter,
+                    timeout=timeout,
+                )
+                content_type = str(meta["content_type"])
+                convert_method = str(meta["method"])
+                duration_seconds = meta.get("duration_seconds")
+                actual_format = str(meta.get("actual_format") or "flac")
+                encoding = "flac"
+            except Exception as exc:  # noqa: BLE001
+                print(f"[worker] transcode FAIL → usar original (sin FLAC): {exc}")
+                used_fallback = True
+                if existing_key:
+                    result["gcs_key"] = existing_key
+                    result["status"] = "transcode_fallback"
+                    result["action"] = "source_passthrough"
+                    result["convert_method"] = "transcode_fallback_existing"
+                    result["error"] = str(exc)
+                    result["bq_inserted"] = _write_catalog(
+                        config=config,
+                        parsed=parsed,
+                        gcs_key=existing_key,
+                        s3_bucket=s3_bucket,
+                        s3_key=s3_key,
+                        file_size_bytes=int(item.get("size") or 0),
+                        sync_mode=sync_mode,
+                        processed_at=processed_at,
+                        convert_method="transcode_fallback_existing",
+                    )
+                    return result
+                fallback_ext = src_ext or ".bin"
+                local_out = os.path.join(tmpdir, f"output{fallback_ext}")
+                copy_file(local_src, local_out, chunk_size=chunk)
+                stored_name = storage_file_name(stem, fallback_ext)
+                gcs_key = gcs_key_for_audio(
+                    stored_name,
+                    parsed["file_date"],
+                    gcs_prefix,
+                    date_folder_format=date_folder_format,
+                )
+                result["gcs_key"] = gcs_key
+                content_type = _guess_content_type(probe) if probe else "application/octet-stream"
+                convert_method = "transcode_fallback_passthrough"
+                duration_seconds = probe.duration_seconds if probe else None
+                actual_format = probe.actual_format if probe else None
+                encoding = "passthrough"
 
         size = stream_file_to_gcs(
             gcs_client,
@@ -254,10 +401,20 @@ def process_one_candidate(
             f"[worker] OK gs://{gcs_bucket}/{gcs_key} "
             f"bytes={size} method={convert_method} format={actual_format}"
         )
+        if encoding == "flac" and not used_fallback:
+            result["deleted_originals"] = _delete_non_flac_originals(
+                gcs_client,
+                bucket=gcs_bucket,
+                stem=stem,
+                file_date=parsed["file_date"],
+                gcs_prefix=gcs_prefix,
+                date_folder_format=date_folder_format,
+                keep_key=gcs_key,
+            )
 
-    row = build_catalog_row(
-        parsed=catalog_parsed,
-        gcs_bucket=gcs_bucket,
+    inserted = _write_catalog(
+        config=config,
+        parsed=parsed,
         gcs_key=gcs_key,
         s3_bucket=s3_bucket,
         s3_key=s3_key,
@@ -269,18 +426,9 @@ def process_one_candidate(
         actual_format=actual_format,
         encoding=encoding,
     )
-    inserted = 0
-    if bool(bq_cfg.get("enabled", True)):
-        inserted = catalog_files(
-            project_id=gcp_cfg["project_id"],
-            dataset_id=bq_cfg.get("dataset_id", "raw_queue_smart"),
-            table_id=bq_cfg.get("table_id", "hist_queesmart_mp3_catalog"),
-            rows=[row],
-            location=bq_cfg.get("location", "US"),
-        )
 
-    result["status"] = "ok"
-    result["action"] = action
+    result["status"] = "transcode_fallback" if used_fallback else "ok"
+    result["action"] = action if not used_fallback else "source_passthrough"
     result["convert_method"] = convert_method
     result["actual_format"] = actual_format
     result["bytes"] = size

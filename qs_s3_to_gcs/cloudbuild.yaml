@@ -31,9 +31,9 @@
 substitutions:
   _LOCATION: 'us-central1'
   _SOURCE_DIR: 'qs_s3_to_gcs/src'
-  _MEMORY: '512Mi'
+  _MEMORY: '2Gi'
   _CPU: '1'
-  _TASK_TIMEOUT: '900s'
+  _TASK_TIMEOUT: '3600s'
   _MAX_RETRIES: '1'
   _CONFIG_PATH: '/app/config/config.json'
   _AWS_S3_PREFIX: ''

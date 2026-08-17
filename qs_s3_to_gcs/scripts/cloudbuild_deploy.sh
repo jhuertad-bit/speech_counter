@@ -65,7 +65,7 @@ TASK_TIMEOUT="${_TASK_TIMEOUT:-3600s}"
 MAX_RETRIES="${_MAX_RETRIES:-1}"
 PARALLELISM="${_PARALLELISM:-10}"
 CONFIG_PATH="${_CONFIG_PATH:-/app/config/config.json}"
-MEMORY="${_MEMORY:-1Gi}"
+MEMORY="${_MEMORY:-2Gi}"
 CPU="${_CPU:-1}"
 
 if [[ ! -d "${SOURCE_DIR}" ]]; then

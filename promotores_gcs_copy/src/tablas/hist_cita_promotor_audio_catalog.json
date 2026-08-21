@@ -1,0 +1,20 @@
+[
+  {"name": "fecha_audio", "type": "DATE", "mode": "REQUIRED"},
+  {"name": "fecha_procesamiento", "type": "TIMESTAMP", "mode": "REQUIRED"},
+  {"name": "file_name", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "gcs_uri", "type": "STRING", "mode": "REQUIRED"},
+  {"name": "gcs_path", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "source_gcs_uri", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "source_gcs_path", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "folder_uuid", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "file_size_bytes", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "content_type", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "duration_seconds", "type": "FLOAT", "mode": "NULLABLE"},
+  {"name": "audio_codec", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "sample_rate_hz", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "channels", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "format_name", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "bit_rate", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "sync_mode", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "copy_result", "type": "STRING", "mode": "NULLABLE"}
+]

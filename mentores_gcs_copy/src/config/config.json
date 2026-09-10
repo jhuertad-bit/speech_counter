@@ -6,7 +6,7 @@
   },
   "dest": {
     "project_id": "prd-utpbi-data-operation",
-    "bucket_name": "prd-utp-stg-citapromotor-9bd1430535b8",
+    "bucket_name": "prd-utp-stg-mentores",
     "destination_prefix": "audios/mentores/",
     "state_object": "state/mentores_gcs_copy_last_sync.json",
     "region": "us-central1",

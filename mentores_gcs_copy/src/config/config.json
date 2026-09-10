@@ -1,0 +1,47 @@
+{
+  "source": {
+    "project_id": "citapromotor-utp",
+    "bucket_name": "citapromotor-utp.firebasestorage.app",
+    "prefix": "audios/mentores"
+  },
+  "dest": {
+    "project_id": "prd-utpbi-data-operation",
+    "bucket_name": "prd-utp-stg-citapromotor-9bd1430535b8",
+    "destination_prefix": "audios/mentores/",
+    "state_object": "state/mentores_gcs_copy_last_sync.json",
+    "region": "us-central1",
+    "cloud_run_job_name": "prd-utpbi-mentores-gcs-copy",
+    "service_account_email": "genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com",
+    "scheduler_name": "prd-sch-mentores-gcs-copy",
+    "schedule": "0 5 * * *",
+    "schedule_timezone": "America/Lima"
+  },
+  "job": {
+    "role": "worker",
+    "manifest_prefix": "state/manifests/mentores",
+    "max_parallelism": 10
+  },
+  "sync": {
+    "mode": "daily_yesterday",
+    "timezone": "America/Lima",
+    "layout": "date_folder",
+    "gcs_date_folder_format": "%d-%m-%Y",
+    "skip_if_exists_in_dest": true
+  },
+  "batch": {
+    "max_files": 5000,
+    "min_object_size_bytes": 1
+  },
+  "bigquery": {
+    "enabled": true,
+    "project_id": "prd-utpbi-data-operation",
+    "dataset_id": "raw_cita_promotor",
+    "table_id": "hist_cita_mentor_audio_catalog",
+    "location": "US"
+  },
+  "secrets": {
+    "source": "secret_manager",
+    "secret_resource": "projects/prd-utpbi-data-operation/secrets/PromotoresSourceSa",
+    "version": "latest"
+  }
+}

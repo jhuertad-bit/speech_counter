@@ -1,0 +1,212 @@
+# =============================================================================
+# Cloud Workflows — Mentores GCS→GCS (prepare + worker)
+# =============================================================================
+#
+# Solo copia + catálogo BQ (sin Gen IA por ahora).
+# 1) Job role=prepare (1 task) → manifiesto en bucket destino
+# 2) Lee count del meta
+# 3) Job role=worker (tasks=count) → copia + catálogo BQ
+#
+# Args opcionales:
+#   process_date   YYYY-MM-DD (default: ayer Lima)
+#
+# Deploy:
+#   gcloud workflows deploy prd-utpbi-mentores-gcs-copy \
+#     --project=prd-utpbi-data-operation \
+#     --location=us-central1 \
+#     --source=mentores_gcs_copy/workflows/daily_pipeline.yaml \
+#     --service-account=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+# =============================================================================
+
+main:
+  params: [args]
+  steps:
+    - init:
+        assign:
+          - project_id: ${default(map.get(args, "project_id"), "prd-utpbi-data-operation")}
+          - location: ${default(map.get(args, "location"), "us-central1")}
+          - job_name: ${default(map.get(args, "job_name"), "prd-utpbi-mentores-gcs-copy")}
+          - gcs_bucket: ${default(map.get(args, "gcs_bucket"), "prd-utp-stg-citapromotor-9bd1430535b8")}
+          - manifest_prefix: ${default(map.get(args, "manifest_prefix"), "state/manifests/mentores")}
+          - max_failed_tasks: ${default(map.get(args, "max_failed_tasks"), 0)}
+          - process_date: ${default(map.get(args, "process_date"), null)}
+          - started_at: ${sys.now()}
+          - ingest_summary: {}
+
+    - resolve_process_date:
+        switch:
+          - condition: ${process_date != null}
+            next: require_bucket
+          - condition: true
+            steps:
+              - compute_yesterday:
+                  assign:
+                    - process_date: ${text.substring(time.format(sys.now() - 104400), 0, 10)}
+
+    - require_bucket:
+        switch:
+          - condition: ${gcs_bucket == ""}
+            steps:
+              - raise_bucket:
+                  raise:
+                    message: "Pasa gcs_bucket (bucket destino donde está el manifiesto)"
+          - condition: true
+            next: log_start
+
+    - log_start:
+        call: sys.log
+        args:
+          severity: INFO
+          text: '${"mentores-gcs-copy START process_date=" + process_date + " job=" + job_name}'
+
+    - run_prepare_job:
+        call: googleapis.run.v1.namespaces.jobs.run
+        args:
+          name: '${"namespaces/" + project_id + "/jobs/" + job_name}'
+          location: ${location}
+          body:
+            overrides:
+              taskCount: 1
+              containerOverrides:
+                - env:
+                    - name: JOB_ROLE
+                      value: prepare
+                    - name: QS_JOB_ROLE
+                      value: prepare
+                    - name: SYNC_PROCESS_DATE
+                      value: ${process_date}
+                    - name: SYNC_TARGET_DATE
+                      value: ${process_date}
+          connector_params:
+            timeout: 3600
+        result: prepare_status
+
+    - normalize_prepare:
+        assign:
+          - prepare_exec: ${default(map.get(prepare_status, "response"), prepare_status)}
+          - prepare_st: ${default(map.get(prepare_exec, "status"), json.decode("{}"))}
+          - prepare_failed: ${int(default(map.get(prepare_st, "failedCount"), 0))}
+
+    - validate_prepare:
+        switch:
+          - condition: ${prepare_failed > 0}
+            steps:
+              - raise_prepare:
+                  raise:
+                    message: "Cloud Run Job prepare falló"
+                    failedCount: ${prepare_failed}
+          - condition: true
+            next: read_manifest_meta
+
+    - read_manifest_meta:
+        call: http.get
+        args:
+          url: '${"https://storage.googleapis.com/storage/v1/b/" + gcs_bucket + "/o/" + text.url_encode(manifest_prefix + "/" + process_date + ".meta.json") + "?alt=media"}'
+          auth:
+            type: OAuth2
+        result: meta_http
+
+    - parse_manifest_meta:
+        assign:
+          - manifest_meta: ${meta_http.body}
+          - manifest_count: ${int(default(map.get(manifest_meta, "count"), 0))}
+
+    - log_manifest:
+        call: sys.log
+        args:
+          severity: INFO
+          text: '${"Manifiesto count=" + string(manifest_count)}'
+
+    - maybe_skip_worker:
+        switch:
+          - condition: ${manifest_count == 0}
+            steps:
+              - assign_empty:
+                  assign:
+                    - ingest_summary:
+                        manifest_count: 0
+                        succeededCount: 0
+                        failedCount: 0
+              - jump_empty:
+                  next: finalize
+          - condition: true
+            next: run_worker_job
+
+    - run_worker_job:
+        try:
+          steps:
+            - call_worker:
+                call: googleapis.run.v1.namespaces.jobs.run
+                args:
+                  name: '${"namespaces/" + project_id + "/jobs/" + job_name}'
+                  location: ${location}
+                  body:
+                    overrides:
+                      taskCount: ${manifest_count}
+                      containerOverrides:
+                        - env:
+                            - name: JOB_ROLE
+                              value: worker
+                            - name: QS_JOB_ROLE
+                              value: worker
+                            - name: SYNC_PROCESS_DATE
+                              value: ${process_date}
+                            - name: SYNC_TARGET_DATE
+                              value: ${process_date}
+                  connector_params:
+                    timeout: 14400
+                result: worker_status
+            - mark_ok:
+                assign:
+                  - worker_connector_ok: true
+        except:
+          as: worker_err
+          steps:
+            - assign_err:
+                assign:
+                  - worker_connector_ok: false
+                  - worker_status: ${default(map.get(worker_err, "operation"), worker_err)}
+
+    - normalize_worker:
+        assign:
+          - worker_exec: ${default(map.get(worker_status, "response"), worker_status)}
+          - worker_st: ${default(map.get(worker_exec, "status"), json.decode("{}"))}
+          - succeeded_count: ${int(default(map.get(worker_st, "succeededCount"), 0))}
+          - failed_count: ${int(default(map.get(worker_st, "failedCount"), 0))}
+          - ingest_summary:
+              manifest_count: ${manifest_count}
+              succeededCount: ${succeeded_count}
+              failedCount: ${failed_count}
+
+    - gate_on_failures:
+        switch:
+          - condition: ${not(default(worker_connector_ok, true)) and failed_count == 0 and succeeded_count == 0}
+            steps:
+              - raise_unknown:
+                  raise:
+                    message: "Worker falló sin failedCount"
+          - condition: ${max_failed_tasks >= 0 and failed_count > max_failed_tasks}
+            steps:
+              - raise_ingest:
+                  raise:
+                    message: "Copia parcial"
+                    ingest: ${ingest_summary}
+          - condition: true
+            next: finalize
+
+    - finalize:
+        assign:
+          - elapsed_seconds: ${sys.now() - started_at}
+          - summary:
+              process_date: ${process_date}
+              ingest: ${ingest_summary}
+              elapsed_seconds: ${elapsed_seconds}
+
+    - log_summary:
+        call: sys.log
+        args:
+          severity: INFO
+          text: '${"mentores-gcs-copy OK process_date=" + string(process_date) + " elapsed_s=" + string(elapsed_seconds)}'
+
+    - return_summary:
+        return: ${summary}

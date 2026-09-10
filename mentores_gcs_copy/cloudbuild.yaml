@@ -1,0 +1,59 @@
+# Cloud Run Job: copia GCS→GCS entre proyectos (prepare + worker).
+#
+# Sustituciones del activador:
+#   Obligatorias: _PROJECT_ID, _JOB_NAME, _SERVICE_ACCOUNT,
+#                 _DEST_BUCKET_NAME, _SOURCE_PROJECT_ID, _SOURCE_BUCKET_NAME
+#   Opcionales:   _SOURCE_PREFIX, _DEST_PREFIX, _LOCATION, _MEMORY, _CPU,
+#                 _TASK_TIMEOUT, _MAX_RETRIES, _PARALLELISM, _SOURCE_DIR
+#
+# Ejemplo:
+#   _PROJECT_ID=prd-utpbi-data-operation
+#   _JOB_NAME=prd-utpbi-mentores-gcs-copy
+#   _SERVICE_ACCOUNT=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+#   _DEST_BUCKET_NAME=prd-utp-stg-mentores
+#   _SOURCE_PROJECT_ID=proyecto-origen
+#   _SOURCE_BUCKET_NAME=bucket-origen
+#   _SOURCE_PREFIX=
+#   _DEST_PREFIX=mentores/
+#   _LOCATION=us-central1
+#   _SOURCE_DIR=mentores_gcs_copy/src
+#
+# IAM: SA del job = objectAdmin en destino; secretAccessor en PromotoresSourceSa;
+#       bigquery.dataEditor en raw_cita_promotor + jobUser en el proyecto.
+substitutions:
+  _LOCATION: 'us-central1'
+  _SOURCE_DIR: 'mentores_gcs_copy/src'
+  _MEMORY: '1Gi'
+  _CPU: '1'
+  _TASK_TIMEOUT: '3600s'
+  _MAX_RETRIES: '1'
+  _PARALLELISM: '10'
+  _CONFIG_PATH: '/app/config/config.json'
+  _SOURCE_PREFIX: 'audios/mentores'
+  _DEST_PREFIX: 'audios/mentores/'
+
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - 'mentores_gcs_copy/scripts/cloudbuild_deploy.sh'
+    env:
+      - '_PROJECT_ID=${_PROJECT_ID}'
+      - '_JOB_NAME=${_JOB_NAME}'
+      - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '_DEST_BUCKET_NAME=${_DEST_BUCKET_NAME}'
+      - '_SOURCE_PROJECT_ID=${_SOURCE_PROJECT_ID}'
+      - '_SOURCE_BUCKET_NAME=${_SOURCE_BUCKET_NAME}'
+      - '_SOURCE_PREFIX=${_SOURCE_PREFIX}'
+      - '_DEST_PREFIX=${_DEST_PREFIX}'
+      - '_LOCATION=${_LOCATION}'
+      - '_SOURCE_DIR=${_SOURCE_DIR}'
+      - '_MEMORY=${_MEMORY}'
+      - '_CPU=${_CPU}'
+      - '_TASK_TIMEOUT=${_TASK_TIMEOUT}'
+      - '_MAX_RETRIES=${_MAX_RETRIES}'
+      - '_PARALLELISM=${_PARALLELISM}'
+      - '_CONFIG_PATH=${_CONFIG_PATH}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

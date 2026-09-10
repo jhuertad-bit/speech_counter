@@ -1,0 +1,72 @@
+================================================================================
+Mentores GCS copy — JSON de credenciales del proyecto origen
+Proyecto destino (nuestro): prd-utpbi-data-operation
+================================================================================
+
+El JSON que te dieron es una service account key del proyecto ORIGEN.
+NO lo subas al repo. NO lo pongas como GOOGLE_APPLICATION_CREDENTIALS del Job
+(eso también firmaría el bucket destino).
+
+Va a Secret Manager en NUESTRO proyecto. El Job lo usa SOLO para leer origen.
+El destino sigue con la SA del Job:
+  genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+
+
+1) Crear el secret (desde la carpeta donde está el JSON)
+--------------------------------------------------------------------------------
+
+gcloud secrets create PromotoresSourceSa \
+  --project=prd-utpbi-data-operation \
+  --replication-policy=automatic \
+  --data-file=citapromotor-utp-9bd1430535b8.json
+
+
+2) Dar acceso a la SA del Job
+--------------------------------------------------------------------------------
+
+gcloud secrets add-iam-policy-binding PromotoresSourceSa \
+  --project=prd-utpbi-data-operation \
+  --member="serviceAccount:genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+
+3) Qué mira el Job
+--------------------------------------------------------------------------------
+
+Config: mentores_gcs_copy/src/config/config.json
+
+  secrets.secret_resource =
+    projects/prd-utpbi-data-operation/secrets/PromotoresSourceSa
+
+Override opcional por env:
+  SOURCE_SA_SECRET_RESOURCE
+  SOURCE_SA_JSON_PATH          (archivo montado; solo local/prueba)
+
+
+4) Del JSON (sin pegarlo en chat ni en git)
+--------------------------------------------------------------------------------
+
+Anota:
+  project_id     → SOURCE_PROJECT_ID
+  client_email   → SA del origen (solo para IAM/auditoría)
+
+El bucket origen lo pones en SOURCE_BUCKET_NAME.
+
+
+5) Cómo copia
+--------------------------------------------------------------------------------
+
+Con JSON: stream (lee con esa SA, escribe con genesys-audio-processor).
+Rewrite GCS solo si el origen se accede con ADC (IAM cross-project, sin JSON).
+
+
+6) IAM resumen
+--------------------------------------------------------------------------------
+
+Destino: SA del Job = roles/storage.objectAdmin en el bucket destino
+Secret:  SA del Job = roles/secretmanager.secretAccessor en PromotoresSourceSa
+Origen:  ya viene en el JSON; no hace falta IAM extra en el otro proyecto
+
+
+FIN
+================================================================================

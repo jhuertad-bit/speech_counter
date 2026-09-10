@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 from google.cloud import storage
 
-from audio_paths import DEFAULT_FILENAME_REGEX, resolve_sync_mode
+from audio_paths import resolve_sync_mode
 from config_loader import load_config
 from manifest import read_manifest_item, read_manifest_meta
 from sync import (
@@ -81,7 +81,7 @@ def run_worker(config: dict[str, Any]) -> int:
     process_date = _process_date(config)
     manifest_prefix = job_cfg.get("manifest_prefix", "state/manifests")
     sync_mode = resolve_sync_mode(sync_cfg)
-    filename_regex = sync_cfg.get("filename_regex", DEFAULT_FILENAME_REGEX)
+    filename_pattern = sync_cfg.get("filename_regex")
 
     print(
         f"[worker] task_index={task_index}/{task_count} "
@@ -145,7 +145,7 @@ def run_worker(config: dict[str, Any]) -> int:
         print(json.dumps(summary, indent=2))
         return 0
 
-    item["parsed"] = parse_manifest_parsed(item, filename_regex)
+    item["parsed"] = parse_manifest_parsed(item, filename_pattern)
     s3_client = build_s3_client(aws_cfg, secrets_cfg)
 
     try:

@@ -364,13 +364,13 @@ def process_one_candidate(
     gcs_prefix = gcp_cfg["destination_prefix"]
     date_folder_format = sync_cfg.get("gcs_date_folder_format", "%Y-%m-%d")
     skip_if_exists = bool(sync_cfg.get("skip_if_exists_in_gcs", True))
-    filename_regex = sync_cfg.get("filename_regex")
+    filename_pattern = sync_cfg.get("filename_regex")
     # Default True: siempre loudnorm→FLAC (mejora STT counter / frases bajas).
     force_transcode_flac = bool(audio_cfg.get("force_transcode_flac", True))
 
     s3_key = item["key"]
     source_name = item.get("file_name") or os.path.basename(s3_key)
-    parsed = item.get("parsed") or parse_audio_filename(source_name, filename_regex)
+    parsed = item.get("parsed") or parse_audio_filename(source_name, filename_pattern)
     if not parsed:
         raise ValueError(f"nombre no parseable: {source_name}")
 

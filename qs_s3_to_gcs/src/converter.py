@@ -20,8 +20,8 @@ from typing import Any
 
 SUPPORTED_EXTENSIONS = frozenset({
     ".mp3", ".webm", ".ogg", ".opus", ".wav", ".wave", ".flac",
-    ".m4a", ".aac", ".wma", ".amr", ".3gp", ".mp4", ".aiff", ".aif",
-    ".caf", ".mp2", ".mpeg", ".mpg",
+    ".m4a", ".aac", ".wma", ".amr", ".3gp", ".mp4", ".audio",
+    ".aiff", ".aif", ".caf", ".mp2", ".mpeg", ".mpg",
 })
 
 # Preferir FLAC si ya existe; si no, el original (webm/mp3/…).

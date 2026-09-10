@@ -15,5 +15,8 @@
   {"name": "sync_mode", "type": "STRING", "mode": "NULLABLE"},
   {"name": "convert_method", "type": "STRING", "mode": "NULLABLE"},
   {"name": "actual_format", "type": "STRING", "mode": "NULLABLE"},
-  {"name": "encoding", "type": "STRING", "mode": "NULLABLE"}
+  {"name": "encoding", "type": "STRING", "mode": "NULLABLE"},
+  {"name": "segment_index", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "segment_count", "type": "INTEGER", "mode": "NULLABLE"},
+  {"name": "segment_offset_seconds", "type": "FLOAT", "mode": "NULLABLE"}
 ]

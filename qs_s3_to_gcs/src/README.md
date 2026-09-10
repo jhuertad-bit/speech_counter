@@ -5,17 +5,23 @@ Micro-batch: descarga audios desde **AWS S3** (QueeSmart), los convierte a **MP3
 ## Convención de archivos S3
 
 ```
-AAABBB-YYYYMMDD-correlativo.(mp3|webm|ogg|...)
+{prefijo}-{YYYYMMDD}-{correlativo}.(mp3|webm|ogg|…|audio)
 ```
 
-Ejemplo: `015AD1-20260217-123728.mp3` | `095IX1-20260318-155702.webm`
+El prepare **no usa regex con longitudes fijas**: valida **tres segmentos entre `-`** y extensión de audio. Ticketero puede variar el prefijo; nosotros normalizamos campus/tipo en ingest.
 
-| Parte | Significado |
-|-------|-------------|
-| `AAA` (`015`) | Código de campus |
-| `BBB` (`AD1`) | Código de tipo (metadata) |
-| `YYYYMMDD` | Fecha del audio |
-| `correlativo` | ID secuencial / hora de grabación |
+Ejemplos:
+- `015AD1-20260217-123728.mp3` → campus `015`, tipo `AD1`
+- `65AG6-20260907-001.mp3` → campus `065`, tipo `AG6` (cero implícito)
+- `105AG41-20260907-123728.mp3` → campus `105`, tipo `AG41`
+- `UTP423-20240907-234255.audio` | `QS005-20240907-35398.audio`
+
+| Segmento | Regla |
+|----------|--------|
+| `prefijo` | Alfanumérico, ≥4 chars; campus = primeros 3, tipo = resto |
+| `YYYYMMDD` | 8 dígitos, fecha válida |
+| `correlativo` | Solo dígitos |
+| extensión | `mp3`, `webm`, `audio`, etc. |
 
 En GCS siempre queda como **MP3 normalizado**:
 
@@ -92,7 +98,7 @@ Editar `config/config.json`:
 | `sync` | `mode` | `backfill_all`, `daily_last_n_days` o `daily_yesterday` |
 | `sync` | `lookback_days` | Días hacia atrás en modo prueba (default `15`) |
 | `sync` | `timezone` | Zona para calcular "ayer" (default `America/Lima`) |
-| `sync` | `filename_regex` | Regex del nombre MP3 |
+| `sync` | `filename_regex` | *(opcional, legado)* Regex; si se omite, parseo por guiones |
 | `batch` | `max_files`, `max_total_mb` | Tope por ejecución |
 | `gcp` | `schedule` | Cron (default `0 5 * * *` = 05:00 diario Lima) |
 

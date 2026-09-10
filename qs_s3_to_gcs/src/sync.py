@@ -1,7 +1,7 @@
 """
 Listado S3 + prepare de manifiesto para Cloud Run Job multi-task.
 
-Patrón nombre: AAABBB-YYYYMMDD-correlativo.(mp3|webm|...)
+Patrón nombre: {prefijo}-{YYYYMMDD}-{correlativo}.ext (tres segmentos entre `-`)
 Modos (config sync.mode):
   - backfill_all
   - daily_last_n_days
@@ -19,7 +19,6 @@ from botocore.config import Config as BotoConfig
 from google.cloud import storage
 
 from audio_paths import (
-    DEFAULT_FILENAME_REGEX,
     basename_from_s3_key,
     file_date_in_window,
     format_date_window,
@@ -115,7 +114,7 @@ def collect_candidates(config: dict[str, Any]) -> tuple[list[dict[str, Any]], di
     mode = resolve_sync_mode(sync_cfg)
     date_start, date_end = resolve_date_window(sync_cfg, mode)
     target_date_str = format_date_window(date_start, date_end)
-    filename_regex = sync_cfg.get("filename_regex", DEFAULT_FILENAME_REGEX)
+    filename_pattern = sync_cfg.get("filename_regex")  # legado; vacío = parseo por guiones
     min_size = int(batch_cfg.get("min_object_size_bytes", 1))
     max_files = int(batch_cfg.get("max_files", 500))
 
@@ -134,7 +133,7 @@ def collect_candidates(config: dict[str, Any]) -> tuple[list[dict[str, Any]], di
     rejected_date = 0
 
     for item in all_objects:
-        parsed = parse_audio_filename(item["file_name"], filename_regex)
+        parsed = parse_audio_filename(item["file_name"], filename_pattern)
         if not parsed:
             rejected_name += 1
             continue
@@ -227,11 +226,11 @@ def run_prepare(config: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
-def parse_manifest_parsed(item: dict[str, Any], filename_regex: str) -> dict[str, Any]:
+def parse_manifest_parsed(item: dict[str, Any], filename_pattern: str | None = None) -> dict[str, Any]:
     """Convierte parsed del manifiesto (file_date ISO) a tipos runtime."""
     raw = item.get("parsed")
     if not raw:
-        parsed = parse_audio_filename(item["file_name"], filename_regex)
+        parsed = parse_audio_filename(item["file_name"], filename_pattern)
         if not parsed:
             raise ValueError(f"nombre no parseable: {item.get('file_name')}")
         return parsed

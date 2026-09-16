@@ -1,6 +1,6 @@
 """
 cr_serialize_queuesmart/main.py
-Cloud Run Job — Whisper LOCAL (VASO) reemplaza STT Chirp en el pipeline queuesmart_vaso.
+Cloud Run Job — Whisper LOCAL (VASO) + diarización pyannote.
 
 Escribe en tablas VASO (NO toca Chirp prod):
   - adf_speech_analytics.hist_queuesmart_mp3_whisper_vaso_raw
@@ -17,10 +17,12 @@ Flujo:
   1. FECHA_AUDIO → audios del día desde enriched_vaso (+ fallback catálogo vaso)
      GCS_URIS   → lista explícita (pruebas), metadata desde BQ si existe
   2. Particiona por source_file_name (padre) para no partir segmentos _s01/_s02
-  3. Whisper LOCAL → transcripcion con [MM:SS] (contrato Counter/Chirp)
-  4. DELETE+INSERT raw por gcs_uri; rebuild prd fusionando segmentos del padre
+  3. faster-whisper → transcripcion [MM:SS] (contrato Counter)
+  4. pyannote speaker-diarization-3.1 → alinea por solapamiento →
+     transcripcion_con_hablantes "[HH:MM:SS] Voz N: texto"
+  5. DELETE+INSERT raw por gcs_uri; rebuild prd fusionando segmentos del padre
 
-Audio Counter: FLAC mono 16 kHz (no estéreo → sin speaker por RMS).
+Audio Counter: FLAC mono 16 kHz. La diarización es neural (no RMS estéreo).
 """
 
 from __future__ import annotations
@@ -33,10 +35,19 @@ import tempfile
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from faster_whisper import WhisperModel
 from google.cloud import bigquery, storage
 from pydub import AudioSegment
+
+from diarize import (
+    annotate_whisper_segments,
+    build_diarized_transcript,
+    load_diarization_pipeline,
+    resolve_torch_device,
+    run_diarization,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,6 +93,18 @@ PROJECT = GCP["project_id"]
 
 FECHA_AUDIO = os.environ.get("FECHA_AUDIO", "").strip()
 GCS_URIS = os.environ.get("GCS_URIS", "").strip()
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "turbo").strip() or "turbo"
+ENABLE_DIARIZATION = os.environ.get("ENABLE_DIARIZATION", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+# hms → [00:00:01] | mmss → [00:01] (Counter-friendly)
+DIARIZATION_STAMP_FORMAT = (
+    os.environ.get("DIARIZATION_STAMP_FORMAT", "hms").strip().lower() or "hms"
+)
+
 # Sesgo léxico Whisper: español peruano + dominio Counter UTP.
 # Sobrescribible con WHISPER_INITIAL_PROMPT (Cloud Run / Cloud Build).
 # Mantener corto: Whisper solo usa ~224 tokens del prompt.
@@ -497,67 +520,19 @@ def load_audio_as_mono_wav(src_path: str, wav_path: str) -> tuple[int, int]:
     return len(audio), channels_original
 
 
-def transcribe_uri(
-    storage_client: storage.Client,
+def _base_row(
     meta: dict,
-    tmpdir: str,
-    model: WhisperModel,
+    *,
+    uri: str,
+    process_date: str | None,
+    duration_seconds: float | None,
+    whisper_payload: dict[str, Any],
+    status: str,
+    transcripcion: str | None,
+    transcripcion_con_hablantes: str | None,
+    observaciones: str,
 ) -> dict:
-    uri = meta["gcs_uri"]
-    bucket_name, blob_name = uri[5:].split("/", 1)
-    blob = storage_client.bucket(bucket_name).blob(blob_name)
-
-    suffix = Path(blob_name).suffix.lower() or ".flac"
-    local_audio = os.path.join(tmpdir, f"{Path(blob_name).stem}{suffix}")
-    blob.download_to_filename(local_audio)
-
-    wav_path = os.path.join(tmpdir, f"{Path(blob_name).stem}_mono.wav")
-    duration_ms, channels_original = load_audio_as_mono_wav(local_audio, wav_path)
-
-    segments_iter, info = model.transcribe(
-        wav_path,
-        language="es",
-        task="transcribe",
-        word_timestamps=True,
-        initial_prompt=WHISPER_INITIAL_PROMPT,
-        condition_on_previous_text=True,
-        temperature=0.0,
-        beam_size=5,
-        vad_filter=True,
-        vad_parameters=dict(
-            threshold=0.5,
-            min_speech_duration_ms=250,
-            max_speech_duration_s=float("inf"),
-            min_silence_duration_ms=500,
-            speech_pad_ms=200,
-        ),
-    )
-    raw_segments = list(segments_iter)
-    segments = filter_segments(raw_segments)
-    transcripcion = build_transcripcion_mmss(segments)
-
-    whisper_payload = {
-        "engine": "faster-whisper",
-        "model": WHISPER_MODEL,
-        "language": getattr(info, "language", "es"),
-        "locale_bias": "es-PE",
-        "initial_prompt_preview": WHISPER_INITIAL_PROMPT[:160],
-        "duration": getattr(info, "duration", duration_ms / 1000.0),
-        "segments_raw": len(raw_segments),
-        "segments_kept": len(segments),
-        "channels_original": channels_original,
-    }
-
-    process_date = meta.get("process_date")
-    if hasattr(process_date, "isoformat"):
-        process_date = process_date.isoformat()
-
-    duration_seconds = meta.get("duration_seconds")
-    if duration_seconds is None:
-        duration_seconds = round(duration_ms / 1000.0, 3)
-
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-
     return {
         "process_date": process_date or date.today().isoformat(),
         "gcs_uri": uri,
@@ -587,19 +562,200 @@ def transcribe_uri(
         "database": meta.get("database"),
         "json_text": json.dumps(whisper_payload, ensure_ascii=False),
         "full_response": json.dumps(whisper_payload, ensure_ascii=False),
-        "status": "OK" if transcripcion else "EMPTY",
+        "status": status,
         "transcripcion": transcripcion,
-        "transcripcion_con_hablantes": None,  # Counter mono; prompt usa [MM:SS]
+        "transcripcion_con_hablantes": transcripcion_con_hablantes,
         "resumen": None,
         "intencion": None,
         "idioma": "es",
         "tono": None,
         "entidades": None,
-        "observaciones": f"whisper:{WHISPER_MODEL}",
+        "observaciones": observaciones,
         "load_date": now_utc,
         "_parent_key": parent_key_from_names(meta.get("source_file_name"), meta.get("file_name")),
         "_segment_ord": segment_ord_from_file_name(meta.get("file_name")),
     }
+
+
+def diarize_and_format(
+    wav_path: str,
+    segments: list,
+    diarization_pipeline: Any | None,
+) -> tuple[str | None, dict[str, Any]]:
+    """
+    Alinea segmentos Whisper con turns pyannote (mayor solapamiento).
+    Returns (texto_diarizado, meta_payload).
+    """
+    meta: dict[str, Any] = {
+        "enabled": bool(diarization_pipeline),
+        "model": "pyannote/speaker-diarization-3.1",
+        "turns": 0,
+        "speakers": 0,
+        "error": None,
+    }
+    if diarization_pipeline is None:
+        return None, meta
+
+    try:
+        turns = run_diarization(diarization_pipeline, wav_path)
+        meta["turns"] = len(turns)
+        if not turns:
+            meta["error"] = "no_speaker_turns"
+            logger.warning("  Diarización sin turns (silencio / audio corto): %s", wav_path)
+            return None, meta
+
+        annotated = annotate_whisper_segments(segments, turns)
+        speakers = {a["speaker"] for a in annotated if a.get("speaker")}
+        meta["speakers"] = len(speakers)
+        text = build_diarized_transcript(
+            annotated,
+            stamp_format=DIARIZATION_STAMP_FORMAT,
+            pause_gap_sec=PAUSE_GAP_SEC,
+        )
+        return (text or None), meta
+    except Exception as exc:  # noqa: BLE001
+        meta["error"] = str(exc)
+        logger.error("  Diarización falló: %s", exc, exc_info=True)
+        return None, meta
+
+
+def transcribe_uri(
+    storage_client: storage.Client,
+    meta: dict,
+    tmpdir: str,
+    model: WhisperModel,
+    diarization_pipeline: Any | None = None,
+) -> dict:
+    uri = meta["gcs_uri"]
+    process_date = meta.get("process_date")
+    if hasattr(process_date, "isoformat"):
+        process_date = process_date.isoformat()
+
+    bucket_name, blob_name = uri[5:].split("/", 1)
+    blob = storage_client.bucket(bucket_name).blob(blob_name)
+
+    suffix = Path(blob_name).suffix.lower() or ".flac"
+    local_audio = os.path.join(tmpdir, f"{Path(blob_name).stem}{suffix}")
+    blob.download_to_filename(local_audio)
+
+    wav_path = os.path.join(tmpdir, f"{Path(blob_name).stem}_mono.wav")
+    try:
+        duration_ms, channels_original = load_audio_as_mono_wav(local_audio, wav_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("  Audio corrupto/ilegible %s: %s", uri, exc, exc_info=True)
+        return _base_row(
+            meta,
+            uri=uri,
+            process_date=process_date,
+            duration_seconds=meta.get("duration_seconds"),
+            whisper_payload={
+                "engine": "faster-whisper",
+                "model": WHISPER_MODEL,
+                "error": f"audio_load_failed: {exc}",
+            },
+            status="CORRUPT",
+            transcripcion=None,
+            transcripcion_con_hablantes=None,
+            observaciones=f"whisper:{WHISPER_MODEL};error=audio_load",
+        )
+
+    if duration_ms < 500:
+        logger.warning("  Audio casi silencio (%.0f ms): %s", duration_ms, uri)
+        return _base_row(
+            meta,
+            uri=uri,
+            process_date=process_date,
+            duration_seconds=round(duration_ms / 1000.0, 3),
+            whisper_payload={
+                "engine": "faster-whisper",
+                "model": WHISPER_MODEL,
+                "duration_ms": duration_ms,
+                "error": "too_short_or_silent",
+            },
+            status="EMPTY",
+            transcripcion=None,
+            transcripcion_con_hablantes=None,
+            observaciones=f"whisper:{WHISPER_MODEL};silent_or_short",
+        )
+
+    try:
+        segments_iter, info = model.transcribe(
+            wav_path,
+            language="es",
+            task="transcribe",
+            word_timestamps=True,
+            initial_prompt=WHISPER_INITIAL_PROMPT,
+            condition_on_previous_text=True,
+            temperature=0.0,
+            beam_size=5,
+            vad_filter=True,
+            vad_parameters=dict(
+                threshold=0.5,
+                min_speech_duration_ms=250,
+                max_speech_duration_s=float("inf"),
+                min_silence_duration_ms=500,
+                speech_pad_ms=200,
+            ),
+        )
+        raw_segments = list(segments_iter)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("  Whisper falló %s: %s", uri, exc, exc_info=True)
+        return _base_row(
+            meta,
+            uri=uri,
+            process_date=process_date,
+            duration_seconds=round(duration_ms / 1000.0, 3),
+            whisper_payload={
+                "engine": "faster-whisper",
+                "model": WHISPER_MODEL,
+                "error": f"transcribe_failed: {exc}",
+            },
+            status="ERROR",
+            transcripcion=None,
+            transcripcion_con_hablantes=None,
+            observaciones=f"whisper:{WHISPER_MODEL};error=transcribe",
+        )
+
+    segments = filter_segments(raw_segments)
+    transcripcion = build_transcripcion_mmss(segments)
+    hablantes_text, diar_meta = diarize_and_format(
+        wav_path, segments, diarization_pipeline
+    )
+
+    whisper_payload = {
+        "engine": "faster-whisper",
+        "model": WHISPER_MODEL,
+        "language": getattr(info, "language", "es"),
+        "locale_bias": "es-PE",
+        "initial_prompt_preview": WHISPER_INITIAL_PROMPT[:160],
+        "duration": getattr(info, "duration", duration_ms / 1000.0),
+        "segments_raw": len(raw_segments),
+        "segments_kept": len(segments),
+        "channels_original": channels_original,
+        "diarization": diar_meta,
+    }
+
+    duration_seconds = meta.get("duration_seconds")
+    if duration_seconds is None:
+        duration_seconds = round(duration_ms / 1000.0, 3)
+
+    obs = f"whisper:{WHISPER_MODEL}"
+    if diar_meta.get("enabled") and not diar_meta.get("error"):
+        obs += f";diarization=pyannote;speakers={diar_meta.get('speakers', 0)}"
+    elif diar_meta.get("error"):
+        obs += f";diarization_error={diar_meta['error']}"
+
+    return _base_row(
+        meta,
+        uri=uri,
+        process_date=process_date,
+        duration_seconds=duration_seconds,
+        whisper_payload=whisper_payload,
+        status="OK" if transcripcion else "EMPTY",
+        transcripcion=transcripcion,
+        transcripcion_con_hablantes=hablantes_text,
+        observaciones=obs,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -828,14 +984,43 @@ def main() -> None:
         raise ValueError(f"FECHA_AUDIO inválida: {FECHA_AUDIO!r}")
 
     logger.info(
-        "=== QueueSmart Whisper → hist STT | modo=%s ===",
+        "=== QueueSmart Whisper+Diarization → hist VASO | modo=%s ===",
         f"LISTA" if is_list else f"DÍA {FECHA_AUDIO}",
     )
 
+    device, compute_type = resolve_torch_device()
     mapped = MODEL_MAP.get(WHISPER_MODEL, WHISPER_MODEL)
     t0 = time.time()
-    model = WhisperModel(mapped, device="cpu", compute_type="int8")
-    logger.info("Whisper '%s' en %.1fs", mapped, time.time() - t0)
+    try:
+        model = WhisperModel(mapped, device=device, compute_type=compute_type)
+    except Exception as exc:  # noqa: BLE001
+        if device != "cpu":
+            logger.warning(
+                "Whisper CUDA/float16 falló (%s); fallback CPU/int8", exc
+            )
+            device, compute_type = "cpu", "int8"
+            model = WhisperModel(mapped, device=device, compute_type=compute_type)
+        else:
+            raise
+    logger.info(
+        "Whisper '%s' device=%s compute_type=%s en %.1fs",
+        mapped,
+        device,
+        compute_type,
+        time.time() - t0,
+    )
+
+    diarization_pipeline = None
+    if ENABLE_DIARIZATION:
+        t1 = time.time()
+        diarization_pipeline = load_diarization_pipeline(device)
+        logger.info(
+            "Diarización %s en %.1fs",
+            "lista" if diarization_pipeline else "OFF (sin token/modelo)",
+            time.time() - t1,
+        )
+    else:
+        logger.info("ENABLE_DIARIZATION=false — solo Whisper [MM:SS]")
 
     storage_client = storage.Client(project=PROJECT)
     bq_client = bigquery.Client(project=PROJECT)
@@ -891,9 +1076,23 @@ def main() -> None:
             uri = meta["gcs_uri"]
             try:
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    row = transcribe_uri(storage_client, meta, tmpdir, model)
+                    row = transcribe_uri(
+                        storage_client,
+                        meta,
+                        tmpdir,
+                        model,
+                        diarization_pipeline=diarization_pipeline,
+                    )
                 rows.append(row)
-                logger.info("  ✓ %s (%s chars)", uri, len(row.get("transcripcion") or ""))
+                n_txt = len(row.get("transcripcion") or "")
+                n_spk = len(row.get("transcripcion_con_hablantes") or "")
+                logger.info(
+                    "  ✓ %s status=%s chars=%s hablantes=%s",
+                    uri,
+                    row.get("status"),
+                    n_txt,
+                    n_spk,
+                )
             except Exception as e:
                 logger.error("  ✗ %s: %s", uri, e, exc_info=True)
 
@@ -902,7 +1101,7 @@ def main() -> None:
     else:
         logger.warning("Tarea %s: sin filas.", task_index)
 
-    logger.info("=== Fin | %s segmentos cargados a hist STT ===", len(rows))
+    logger.info("=== Fin | %s segmentos cargados a hist VASO ===", len(rows))
 
 
 if __name__ == "__main__":

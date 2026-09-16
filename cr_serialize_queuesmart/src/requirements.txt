@@ -1,12 +1,19 @@
 # ============================================================
 # Cloud Run Job: cr_serialize_queuesmart
-# Whisper LOCAL — paso paralelo al STT Chirp (ML.TRANSCRIBE)
+# Whisper LOCAL + pyannote diarization (VASO)
 # ============================================================
 
 setuptools>=68.0.0
+wheel>=0.41.0
 
-# Transcripción LOCAL (sin API key, costo cero)
+# Transcripción LOCAL
 faster-whisper==1.0.3
+
+# Diarización (pyannote 3.1 → speaker-diarization-3.1)
+# torch / torchaudio CPU se instalan en Dockerfile (índice oficial CPU).
+pyannote.audio==3.3.2
+speechbrain>=1.0.0
+soundfile>=0.12.1
 
 # Audio
 pydub==0.25.1
@@ -17,3 +24,4 @@ google-cloud-bigquery==3.20.1
 
 # Utilitarios
 numpy<2.0
+huggingface_hub>=0.23.0

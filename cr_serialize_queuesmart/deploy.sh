@@ -2,12 +2,10 @@
 # ============================================================
 # deploy.sh — Cloud Run Job: cr_serialize_queuesmart
 #
-# Whisper LOCAL + pyannote diarization → tablas VASO.
+# Whisper LOCAL → tablas VASO (sin diarización).
 #
 # Uso:
 #   chmod +x deploy.sh
-#   # Opcional: secret con token HF (gated models pyannote)
-#   export HF_SECRET_NAME=HF_TOKEN   # Secret Manager secret id
 #   ./deploy.sh
 # ============================================================
 
@@ -22,21 +20,16 @@ IMAGE=$(jq -r '.gcp.docker_image_repository'   "$CONFIG_FILE")
 SA_EMAIL=$(jq -r '.gcp.service_account_email'  "$CONFIG_FILE")
 
 WHISPER_MODEL="${WHISPER_MODEL:-turbo}"
-ENABLE_DIARIZATION="${ENABLE_DIARIZATION:-true}"
-DIARIZATION_STAMP_FORMAT="${DIARIZATION_STAMP_FORMAT:-hms}"
-HF_SECRET_NAME="${HF_SECRET_NAME:-}"
 
 echo "============================================================"
 echo "  Deploy: Cloud Run Job — cr_serialize_queuesmart"
 echo "============================================================"
-echo "  Proyecto     : $PROJECT_ID"
-echo "  Región       : $REGION"
-echo "  Job          : $JOB_NAME"
-echo "  Imagen       : $IMAGE"
-echo "  SA Email     : $SA_EMAIL"
-echo "  Whisper      : $WHISPER_MODEL (LOCAL)"
-echo "  Diarization  : $ENABLE_DIARIZATION (pyannote 3.1)"
-echo "  HF secret    : ${HF_SECRET_NAME:-"(none — set HF_SECRET_NAME)"}"
+echo "  Proyecto  : $PROJECT_ID"
+echo "  Región    : $REGION"
+echo "  Job       : $JOB_NAME"
+echo "  Imagen    : $IMAGE"
+echo "  SA Email  : $SA_EMAIL"
+echo "  Whisper   : $WHISPER_MODEL (LOCAL, sin hablantes)"
 echo "============================================================"
 
 echo ""
@@ -46,7 +39,6 @@ gcloud services enable \
     containerregistry.googleapis.com \
     bigquery.googleapis.com \
     storage.googleapis.com \
-    secretmanager.googleapis.com \
     --project="$PROJECT_ID"
 
 echo ""
@@ -54,7 +46,7 @@ echo "[2/4] Build + push imagen (contexto src/, incluye modelo Whisper)..."
 gcloud builds submit "$(dirname "$0")/src" \
     --project="$PROJECT_ID" \
     --tag="$IMAGE" \
-    --timeout="3600s"
+    --timeout="1800s"
 echo "      ✓ $IMAGE"
 
 echo ""
@@ -64,10 +56,6 @@ JOB_EXISTS=$(gcloud run jobs describe "$JOB_NAME" \
     --project="$PROJECT_ID" \
     --format="value(name)" 2>/dev/null || echo "")
 
-ENV_VARS="WHISPER_MODEL=$WHISPER_MODEL"
-ENV_VARS+=",ENABLE_DIARIZATION=$ENABLE_DIARIZATION"
-ENV_VARS+=",DIARIZATION_STAMP_FORMAT=$DIARIZATION_STAMP_FORMAT"
-
 COMMON_FLAGS=(
     --image="$IMAGE"
     --region="$REGION"
@@ -75,22 +63,18 @@ COMMON_FLAGS=(
     --service-account="$SA_EMAIL"
     --memory="32Gi"
     --cpu="8"
-    --task-timeout="14400s"
+    --task-timeout="86400s"
     --max-retries="1"
-    --set-env-vars="$ENV_VARS"
+    --set-env-vars="WHISPER_MODEL=$WHISPER_MODEL,WHISPER_BEAM_SIZE=3,WHISPER_WORD_TIMESTAMPS=false,WHISPER_CONDITION_ON_PREVIOUS=false"
     --labels="project=queuesmart,component=serializer-whisper,env=prd,team=data-engineering,cost-center=utpbi"
+    --parallelism=10
+    --tasks=1
 )
 
-SECRET_FLAGS=()
-if [[ -n "$HF_SECRET_NAME" ]]; then
-    SECRET_FLAGS+=(--set-secrets="HF_TOKEN=${HF_SECRET_NAME}:latest")
-    echo "      Secret HF_TOKEN ← ${HF_SECRET_NAME}:latest"
-fi
-
 if [[ -z "$JOB_EXISTS" ]]; then
-    gcloud run jobs create "$JOB_NAME" "${COMMON_FLAGS[@]}" "${SECRET_FLAGS[@]}"
+    gcloud run jobs create "$JOB_NAME" "${COMMON_FLAGS[@]}"
 else
-    gcloud run jobs update "$JOB_NAME" "${COMMON_FLAGS[@]}" "${SECRET_FLAGS[@]}"
+    gcloud run jobs update "$JOB_NAME" "${COMMON_FLAGS[@]}"
 fi
 echo "      ✓ Job $JOB_NAME listo"
 
@@ -110,11 +94,6 @@ gcloud run jobs describe "$JOB_NAME" \
 echo ""
 echo "============================================================"
 echo "  ✓ Deploy OK — $JOB_NAME ($REGION)"
-echo ""
-echo "  Requisitos diarización:"
-echo "    1) Aceptar términos en https://huggingface.co/pyannote/speaker-diarization-3.1"
-echo "    2) Secret Manager con token HF + IAM secretAccessor a la SA del Job"
-echo "    3) HF_SECRET_NAME=<secret_id> al redeploy, o --update-secrets en execute"
 echo ""
 echo "  MODO DÍA:"
 echo "    gcloud run jobs execute $JOB_NAME \\"

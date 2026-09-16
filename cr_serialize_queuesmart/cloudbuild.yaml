@@ -1,8 +1,7 @@
-# Pipeline: Cloud Run Job Whisper LOCAL → hist STT QueueSmart
-# (reemplazo de ML.TRANSCRIBE / Chirp en etapa 1).
+# Pipeline: Cloud Run Job Whisper LOCAL → hist VASO QueueSmart
 #
 # Activador Cloud Build (repo root, config: cr_serialize_queuesmart/cloudbuild.yaml)
-# Variables de sustitución — PRD VASO (shadow, no toca hist Chirp):
+# Variables de sustitución — PRD VASO:
 #   _PROJECT_ID=prd-utpbi-data-operation
 #   _JOB_NAME=prd-utpbi-queuesmart-audio-serialize-whisper
 #   _SERVICE_ACCOUNT=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
@@ -16,21 +15,13 @@
 #   _LOCATION=us-central1
 #   _MEMORY=32Gi
 #   _CPU=8
-#   _TASK_TIMEOUT=14400s
+#   _PARALLELISM=10
+#   _TASK_TIMEOUT=86400s
 #   _WHISPER_MODEL=turbo
-#   _ENABLE_DIARIZATION=true
-#   _DIARIZATION_STAMP_FORMAT=hms
-#   _HF_SECRET_NAME=HF_TOKEN   # Secret Manager (token Hugging Face gated pyannote)
 #
-# Lee enriched/catalog vaso. Escribe SOLO tablas whisper vaso.
-# Diarización: pyannote/speaker-diarization-3.1 → transcripcion_con_hablantes.
-# Crear tablas antes del primer run:
-#   < queuesmart_vaso/bigquery/tables/hist_queuesmart_mp3_whisper_vaso.sql
-#
-# La SA del Job necesita:
-#   - storage.objectViewer (o Admin) en _BUCKET_NAME
-#   - bigquery.dataEditor en _DATASET_RAW_QUEUE + _DATASET_HIST
-#   - bigquery.jobUser en el proyecto
+# Solo Whisper [MM:SS]. Sin diarización / sin HF_TOKEN.
+# Memoria/CPU altas + parallelism 10: turbo en CPU con varios tasks.
+# task-timeout 24h: un solo task con muchos audios largos no debe morir a 1h.
 
 substitutions:
   _LOCATION: 'us-central1'
@@ -38,13 +29,10 @@ substitutions:
   _IMAGE_NAME: 'queuesmart-audio-serialize-whisper'
   _MEMORY: '32Gi'
   _CPU: '8'
-  _TASK_TIMEOUT: '14400s'
+  _TASK_TIMEOUT: '86400s'
   _MAX_RETRIES: '1'
-  _PARALLELISM: '1'
+  _PARALLELISM: '10'
   _WHISPER_MODEL: 'turbo'
-  _ENABLE_DIARIZATION: 'true'
-  _DIARIZATION_STAMP_FORMAT: 'hms'
-  _HF_SECRET_NAME: ''
   _DATASET_RAW_QUEUE: 'raw_queue_smart'
   _DATASET_HIST: 'adf_speech_analytics'
   _TABLE_HIST_RAW: 'hist_queuesmart_mp3_whisper_vaso_raw'
@@ -59,7 +47,6 @@ options:
   logging: CLOUD_LOGGING_ONLY
 
 steps:
-  # 1) Build imagen (incluye pre-download Whisper ~800MB)
   - id: 'build-image'
     name: 'gcr.io/cloud-builders/docker'
     dir: '${_SOURCE_DIR}'
@@ -71,7 +58,6 @@ steps:
       - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:latest'
       - '.'
 
-  # 2) Push a GCR
   - id: 'push-latest'
     name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:latest']
@@ -80,7 +66,6 @@ steps:
     name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID']
 
-  # 3) Deploy / update Cloud Run Job
   - id: 'deploy-job'
     name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: bash
@@ -100,9 +85,6 @@ steps:
       - '_MAX_RETRIES=${_MAX_RETRIES}'
       - '_PARALLELISM=${_PARALLELISM}'
       - '_WHISPER_MODEL=${_WHISPER_MODEL}'
-      - '_ENABLE_DIARIZATION=${_ENABLE_DIARIZATION}'
-      - '_DIARIZATION_STAMP_FORMAT=${_DIARIZATION_STAMP_FORMAT}'
-      - '_HF_SECRET_NAME=${_HF_SECRET_NAME}'
       - '_DATASET_RAW_QUEUE=${_DATASET_RAW_QUEUE}'
       - '_DATASET_HIST=${_DATASET_HIST}'
       - '_TABLE_HIST_RAW=${_TABLE_HIST_RAW}'

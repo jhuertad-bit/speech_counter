@@ -4,7 +4,7 @@
         "cloud_run_job_name": "prd-utpbi-queuesmart-audio-serialize-whisper-vaso",
         "region": "us-central1",
         "bucket_audio": "prd-utp-stg-queuesmart",
-        "path_audio": "data/input/queuesmart_mp3/imported_from_s3/YYYY-MM-DD",
+        "path_audio": "queuesmart_mp3_s3/YYYY-MM-DD",
         "dataset_raw_queue": "raw_queue_smart",
         "dataset_hist": "adf_speech_analytics",
         "table_hist_raw": "hist_queuesmart_mp3_whisper_vaso_raw",

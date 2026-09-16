@@ -1,0 +1,103 @@
+# Pipeline: Cloud Run Job Whisper LOCAL → hist STT QueueSmart
+# (reemplazo de ML.TRANSCRIBE / Chirp en etapa 1).
+#
+# Activador Cloud Build (repo root, config: cr_serialize_queuesmart/cloudbuild.yaml)
+# Variables de sustitución — PRD VASO (shadow, no toca hist Chirp):
+#   _PROJECT_ID=prd-utpbi-data-operation
+#   _JOB_NAME=prd-utpbi-queuesmart-audio-serialize-whisper-vaso
+#   _SERVICE_ACCOUNT=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+#   _BUCKET_NAME=prd-utp-stg-queuesmart
+#   _DATASET_RAW_QUEUE=raw_queue_smart
+#   _DATASET_HIST=adf_speech_analytics
+#   _TABLE_HIST_RAW=hist_queuesmart_mp3_whisper_vaso_raw
+#   _TABLE_HIST_PRD=hist_queuesmart_mp3_whisper_vaso_prd
+#   _LOCATION=us-central1
+#   _MEMORY=16Gi
+#   _CPU=4
+#   _TASK_TIMEOUT=14400s
+#   _WHISPER_MODEL=turbo
+#
+# Lee audios/tickets de PRD (enriched/catalog). Escribe SOLO tablas vaso.
+# Crear tablas antes del primer run:
+#   < cr_serialize_queuesmart/bigquery/tables/hist_queuesmart_mp3_whisper_vaso.sql
+#
+# La SA del Job necesita:
+#   - storage.objectViewer (o Admin) en _BUCKET_NAME
+#   - bigquery.dataEditor en _DATASET_RAW_QUEUE + _DATASET_HIST
+#   - bigquery.jobUser en el proyecto
+
+substitutions:
+  _LOCATION: 'us-central1'
+  _SOURCE_DIR: 'cr_serialize_queuesmart/src'
+  _IMAGE_NAME: 'queuesmart-audio-serialize-whisper-vaso'
+  _MEMORY: '16Gi'
+  _CPU: '4'
+  _TASK_TIMEOUT: '14400s'
+  _MAX_RETRIES: '1'
+  _PARALLELISM: '1'
+  _WHISPER_MODEL: 'turbo'
+  _DATASET_RAW_QUEUE: 'raw_queue_smart'
+  _DATASET_HIST: 'adf_speech_analytics'
+  _TABLE_HIST_RAW: 'hist_queuesmart_mp3_whisper_vaso_raw'
+  _TABLE_HIST_PRD: 'hist_queuesmart_mp3_whisper_vaso_prd'
+  _TABLE_ENRICHED: 'queuesmart_mp3_enriched'
+  _TABLE_CATALOG: 'hist_queesmart_mp3_catalog'
+
+timeout: 3600s
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  # 1) Build imagen (incluye pre-download Whisper ~800MB)
+  - id: 'build-image'
+    name: 'gcr.io/cloud-builders/docker'
+    dir: '${_SOURCE_DIR}'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:latest'
+      - '.'
+
+  # 2) Push a GCR
+  - id: 'push-latest'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:latest']
+
+  - id: 'push-build-id'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID']
+
+  # 3) Deploy / update Cloud Run Job
+  - id: 'deploy-job'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - 'cr_serialize_queuesmart/scripts/cloudbuild_deploy.sh'
+    env:
+      - '_PROJECT_ID=${_PROJECT_ID}'
+      - '_JOB_NAME=${_JOB_NAME}'
+      - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '_BUCKET_NAME=${_BUCKET_NAME}'
+      - '_LOCATION=${_LOCATION}'
+      - '_IMAGE_NAME=${_IMAGE_NAME}'
+      - '_IMAGE_TAG=$BUILD_ID'
+      - '_MEMORY=${_MEMORY}'
+      - '_CPU=${_CPU}'
+      - '_TASK_TIMEOUT=${_TASK_TIMEOUT}'
+      - '_MAX_RETRIES=${_MAX_RETRIES}'
+      - '_PARALLELISM=${_PARALLELISM}'
+      - '_WHISPER_MODEL=${_WHISPER_MODEL}'
+      - '_DATASET_RAW_QUEUE=${_DATASET_RAW_QUEUE}'
+      - '_DATASET_HIST=${_DATASET_HIST}'
+      - '_TABLE_HIST_RAW=${_TABLE_HIST_RAW}'
+      - '_TABLE_HIST_PRD=${_TABLE_HIST_PRD}'
+      - '_TABLE_ENRICHED=${_TABLE_ENRICHED}'
+      - '_TABLE_CATALOG=${_TABLE_CATALOG}'
+
+images:
+  - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID'
+  - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:latest'

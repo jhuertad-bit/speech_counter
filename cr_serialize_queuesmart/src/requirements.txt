@@ -1,0 +1,19 @@
+# ============================================================
+# Cloud Run Job: cr_serialize_queuesmart
+# Whisper LOCAL — paso paralelo al STT Chirp (ML.TRANSCRIBE)
+# ============================================================
+
+setuptools>=68.0.0
+
+# Transcripción LOCAL (sin API key, costo cero)
+faster-whisper==1.0.3
+
+# Audio
+pydub==0.25.1
+
+# Google Cloud
+google-cloud-storage==2.16.0
+google-cloud-bigquery==3.20.1
+
+# Utilitarios
+numpy<2.0

@@ -1,0 +1,909 @@
+"""
+cr_serialize_queuesmart/main.py
+Cloud Run Job — Whisper LOCAL (VASO) reemplaza STT Chirp en el pipeline queuesmart_vaso.
+
+Escribe en tablas VASO (NO toca Chirp prod):
+  - adf_speech_analytics.hist_queuesmart_mp3_whisper_vaso_raw
+  - adf_speech_analytics.hist_queuesmart_mp3_whisper_vaso_prd
+
+Lee por defecto (config vaso):
+  - raw_queue_smart.queuesmart_mp3_enriched_vaso
+  - raw_queue_smart.hist_queesmart_mp3_catalog_vaso
+Override: QS_TABLE_ENRICHED / QS_TABLE_CATALOG
+
+No ejecuta Gemini (eso sigue en sp_queuesmart_audio_analisis_ia_vaso).
+
+Flujo:
+  1. FECHA_AUDIO → audios del día desde enriched_vaso (+ fallback catálogo vaso)
+     GCS_URIS   → lista explícita (pruebas), metadata desde BQ si existe
+  2. Particiona por source_file_name (padre) para no partir segmentos _s01/_s02
+  3. Whisper LOCAL → transcripcion con [MM:SS] (contrato Counter/Chirp)
+  4. DELETE+INSERT raw por gcs_uri; rebuild prd fusionando segmentos del padre
+
+Audio Counter: FLAC mono 16 kHz (no estéreo → sin speaker por RMS).
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import tempfile
+import time
+from datetime import date, datetime, timezone
+from pathlib import Path
+
+from faster_whisper import WhisperModel
+from google.cloud import bigquery, storage
+from pydub import AudioSegment
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+CONFIG_PATH = os.environ.get(
+    "CONFIG_PATH",
+    str(Path(__file__).resolve().parent / "config" / "config.json"),
+)
+with open(CONFIG_PATH, encoding="utf-8") as f:
+    CONFIG = json.load(f)
+
+GCP = dict(CONFIG["gcp"])
+
+# Overrides Cloud Build / Cloud Run (DEV/PRD vía activador)
+if os.environ.get("GCP_PROJECT_ID"):
+    GCP["project_id"] = os.environ["GCP_PROJECT_ID"].strip()
+if os.environ.get("GCP_BUCKET_AUDIO"):
+    GCP["bucket_audio"] = os.environ["GCP_BUCKET_AUDIO"].strip()
+if os.environ.get("GCP_REGION"):
+    GCP["region"] = os.environ["GCP_REGION"].strip()
+if os.environ.get("GCP_JOB_NAME"):
+    GCP["cloud_run_job_name"] = os.environ["GCP_JOB_NAME"].strip()
+if os.environ.get("GCP_SERVICE_ACCOUNT_EMAIL"):
+    GCP["service_account_email"] = os.environ["GCP_SERVICE_ACCOUNT_EMAIL"].strip()
+if os.environ.get("QS_DATASET_RAW_QUEUE"):
+    GCP["dataset_raw_queue"] = os.environ["QS_DATASET_RAW_QUEUE"].strip()
+if os.environ.get("QS_DATASET_HIST"):
+    GCP["dataset_hist"] = os.environ["QS_DATASET_HIST"].strip()
+if os.environ.get("QS_TABLE_HIST_RAW"):
+    GCP["table_hist_raw"] = os.environ["QS_TABLE_HIST_RAW"].strip()
+if os.environ.get("QS_TABLE_HIST_PRD"):
+    GCP["table_hist_prd"] = os.environ["QS_TABLE_HIST_PRD"].strip()
+if os.environ.get("QS_TABLE_ENRICHED"):
+    GCP["table_enriched"] = os.environ["QS_TABLE_ENRICHED"].strip()
+if os.environ.get("QS_TABLE_CATALOG"):
+    GCP["table_catalog"] = os.environ["QS_TABLE_CATALOG"].strip()
+
+PROJECT = GCP["project_id"]
+
+FECHA_AUDIO = os.environ.get("FECHA_AUDIO", "").strip()
+GCS_URIS = os.environ.get("GCS_URIS", "").strip()
+# Sesgo léxico Whisper: español peruano + dominio Counter UTP.
+# Sobrescribible con WHISPER_INITIAL_PROMPT (Cloud Run / Cloud Build).
+# Mantener corto: Whisper solo usa ~224 tokens del prompt.
+_DEFAULT_WHISPER_INITIAL_PROMPT = (
+    "Conversación presencial en un counter de la Universidad Tecnológica del Perú (UTP), "
+    "en español de Perú (acento limeño/costeño). "
+    "Hablan un asesor de admisiones y un postulante o apoderado. "
+    "Vocabulario frecuente: matrícula, pensión, boleta, voucher, Yape, Plin, agente BCP, "
+    "carrera, modalidad a distancia, semipresencial, turno noche, malla curricular, "
+    "convalidación, documentos, DNI, constancia de estudios, certificado de notas, "
+    "examen de admisión, Pronabec, Beca 18, descuento, vacante, inscripción, campus. "
+    "Tratamiento de usted/tú según el diálogo. No inventar palabras en inglés."
+)
+WHISPER_INITIAL_PROMPT = (
+    os.environ.get("WHISPER_INITIAL_PROMPT", "").strip() or _DEFAULT_WHISPER_INITIAL_PROMPT
+)
+
+PAUSE_GAP_SEC = 0.8
+NO_SPEECH_PROB_THRESHOLD = 0.60
+
+HALLUCINATION_PHRASES = {
+    "gracias por ver el video",
+    "gracias por ver el video.",
+    "gracias por ver",
+    "gracias por ver.",
+    "gracias por su atención",
+    "gracias por su atención.",
+    "subtítulos por la comunidad de amara.org",
+    "subtítulos por",
+    "gracias por ver el vídeo",
+    "gracias por ver el vídeo.",
+    "suscríbete al canal",
+    "suscríbete al canal.",
+    "no olvides suscribirte",
+    "no te olvides de suscribirte",
+}
+
+MODEL_MAP = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large": "Systran/faster-whisper-large-v3",
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+    "large-v3-turbo": "deepdml/faster-whisper-large-v3-turbo-ct2",
+}
+
+TABLE_RAW = f"{PROJECT}.{GCP['dataset_hist']}.{GCP['table_hist_raw']}"
+TABLE_PRD = f"{PROJECT}.{GCP['dataset_hist']}.{GCP['table_hist_prd']}"
+TABLE_ENRICHED = f"{PROJECT}.{GCP['dataset_raw_queue']}.{GCP['table_enriched']}"
+TABLE_CATALOG = f"{PROJECT}.{GCP['dataset_raw_queue']}.{GCP['table_catalog']}"
+
+logger.info(
+    "Config GCP project=%s bucket=%s VASO raw=%s prd=%s (no hist Chirp)",
+    PROJECT,
+    GCP.get("bucket_audio"),
+    TABLE_RAW,
+    TABLE_PRD,
+)
+
+
+# ---------------------------------------------------------------------------
+# Anti-alucinación
+# ---------------------------------------------------------------------------
+def _detect_intra_segment_loop(text: str) -> bool:
+    words = text.split()
+    n = len(words)
+    if n < 6:
+        return False
+    for pattern_len in range(1, n // 4 + 1):
+        pattern = words[:pattern_len]
+        reps = 0
+        for i in range(0, n - pattern_len + 1, pattern_len):
+            if words[i : i + pattern_len] == pattern:
+                reps += 1
+            else:
+                break
+        if reps >= 4:
+            return True
+    return False
+
+
+def filter_segments(raw_segments: list) -> list:
+    filtered = []
+    for seg in raw_segments:
+        text_strip = seg.text.strip()
+        text_lower = text_strip.lower()
+        if seg.no_speech_prob > NO_SPEECH_PROB_THRESHOLD:
+            continue
+        if text_lower in HALLUCINATION_PHRASES:
+            continue
+        if _detect_intra_segment_loop(text_strip):
+            continue
+        filtered.append(seg)
+
+    consecutive_limit = 2
+    short_text_threshold = 60
+    gap_reset_sec = 30.0
+    last_text = None
+    last_text_end = 0.0
+    consecutive_count = 0
+    final_segments = []
+
+    for seg in filtered:
+        text_strip = seg.text.strip()
+        is_short = len(text_strip) <= short_text_threshold
+        if is_short and text_strip == last_text:
+            gap = seg.start - last_text_end
+            if gap > gap_reset_sec:
+                consecutive_count = 1
+            else:
+                consecutive_count += 1
+                if consecutive_count > consecutive_limit:
+                    last_text_end = seg.end
+                    continue
+        else:
+            last_text = text_strip
+            consecutive_count = 1
+        last_text_end = seg.end
+        final_segments.append(seg)
+
+    return final_segments
+
+
+# ---------------------------------------------------------------------------
+# Texto [MM:SS]
+# ---------------------------------------------------------------------------
+def seconds_to_mmss(seconds: float) -> str:
+    total = max(0, int(seconds))
+    mm, ss = divmod(total, 60)
+    return f"{mm:02d}:{ss:02d}"
+
+
+def build_transcripcion_mmss(segments: list) -> str:
+    if not segments:
+        return ""
+
+    blocks: list[str] = []
+    current_words: list[str] = []
+    block_start = float(segments[0].start)
+    prev_end = float(segments[0].start)
+
+    def flush():
+        nonlocal current_words
+        if not current_words:
+            return
+        stamp = seconds_to_mmss(block_start)
+        blocks.append(f"[{stamp}] {' '.join(current_words).strip()}")
+        current_words = []
+
+    for seg in segments:
+        text = seg.text.strip()
+        if not text:
+            continue
+        gap = float(seg.start) - prev_end
+        if current_words and gap >= PAUSE_GAP_SEC:
+            flush()
+            block_start = float(seg.start)
+        if not current_words:
+            block_start = float(seg.start)
+        current_words.append(text)
+        prev_end = float(seg.end)
+
+    flush()
+    return "\n".join(blocks)
+
+
+def parent_key_from_names(source_file_name: str | None, file_name: str | None) -> str:
+    src = (source_file_name or "").strip()
+    if src:
+        return src
+    fn = (file_name or "").strip()
+    return re.sub(r"_s\d+\.", ".", fn) if fn else ""
+
+
+def segment_ord_from_file_name(file_name: str | None) -> int | None:
+    if not file_name:
+        return None
+    m = re.search(r"_s(\d+)\.", file_name, flags=re.IGNORECASE)
+    return int(m.group(1)) if m else None
+
+
+# ---------------------------------------------------------------------------
+# Metadata desde BQ (mismo universo que el SP Chirp)
+# ---------------------------------------------------------------------------
+def fetch_work_items_for_date(bq_client: bigquery.Client, process_date: str) -> list[dict]:
+    """Replica la selección de audios del SP gen_ia: enriched + fallback catálogo."""
+    sql = f"""
+    WITH enriched AS (
+      SELECT
+        e.process_day AS process_date,
+        e.gcs_uri,
+        e.file_name,
+        COALESCE(e.source_file_name, e.file_name) AS source_file_name,
+        COALESCE(e.audio, e.source_file_name, e.file_name) AS audio,
+        e.recordid,
+        e.rowid,
+        e.codagencia,
+        CAST(NULL AS STRING) AS gcs_path,
+        e.campus_code,
+        e.type_code,
+        e.correlative,
+        e.file_size_bytes,
+        e.duration_seconds,
+        CAST(NULL AS STRING) AS sync_mode,
+        e.convert_method,
+        CAST(NULL AS STRING) AS s3_uri,
+        e.match_status,
+        e.asesornombre,
+        e.asesorusuario,
+        e.asesorcodigo,
+        e.ndoc,
+        e.nombresusuario,
+        e.numcelular,
+        e.clientetipo,
+        e.`database`
+      FROM `{TABLE_ENRICHED}` AS e
+      WHERE e.process_day = @fecha
+        AND e.gcs_uri IS NOT NULL
+    ),
+    catalog_fallback AS (
+      SELECT * EXCEPT(rn)
+      FROM (
+        SELECT
+          c.fecha_audio AS process_date,
+          c.gcs_uri,
+          c.file_name,
+          COALESCE(c.source_file_name, c.file_name) AS source_file_name,
+          COALESCE(c.source_file_name, c.file_name) AS audio,
+          CAST(NULL AS STRING) AS recordid,
+          CAST(NULL AS INT64) AS rowid,
+          CAST(NULL AS STRING) AS codagencia,
+          c.gcs_path,
+          c.campus_code,
+          c.type_code,
+          c.correlative,
+          c.file_size_bytes,
+          c.duration_seconds,
+          c.sync_mode,
+          c.convert_method,
+          c.s3_uri,
+          'GCS_ONLY' AS match_status,
+          CAST(NULL AS STRING) AS asesornombre,
+          CAST(NULL AS STRING) AS asesorusuario,
+          CAST(NULL AS STRING) AS asesorcodigo,
+          CAST(NULL AS STRING) AS ndoc,
+          CAST(NULL AS STRING) AS nombresusuario,
+          CAST(NULL AS STRING) AS numcelular,
+          CAST(NULL AS STRING) AS clientetipo,
+          CAST(NULL AS STRING) AS `database`,
+          ROW_NUMBER() OVER (
+            PARTITION BY c.gcs_uri
+            ORDER BY c.fecha_procesamiento DESC
+          ) AS rn
+        FROM `{TABLE_CATALOG}` AS c
+        WHERE c.fecha_audio = @fecha
+          AND c.gcs_uri IS NOT NULL
+          AND c.gcs_uri NOT IN (SELECT gcs_uri FROM enriched)
+      )
+      WHERE rn = 1
+    )
+    SELECT * FROM enriched
+    UNION ALL
+    SELECT * FROM catalog_fallback
+    ORDER BY source_file_name, file_name, gcs_uri
+    """
+    job = bq_client.query(
+        sql,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("fecha", "DATE", process_date)]
+        ),
+    )
+    return [dict(row.items()) for row in job.result()]
+
+
+def fetch_work_items_for_uris(bq_client: bigquery.Client, uris: list[str]) -> list[dict]:
+    """Metadata BQ por URI; si no hay fila, stub mínimo para poder transcribir igual."""
+    sql = f"""
+    WITH wanted AS (
+      SELECT uri FROM UNNEST(@uris) AS uri
+    ),
+    enriched AS (
+      SELECT
+        COALESCE(e.process_day, CURRENT_DATE('America/Lima')) AS process_date,
+        e.gcs_uri,
+        e.file_name,
+        COALESCE(e.source_file_name, e.file_name) AS source_file_name,
+        COALESCE(e.audio, e.source_file_name, e.file_name) AS audio,
+        e.recordid,
+        e.rowid,
+        e.codagencia,
+        CAST(NULL AS STRING) AS gcs_path,
+        e.campus_code,
+        e.type_code,
+        e.correlative,
+        e.file_size_bytes,
+        e.duration_seconds,
+        CAST(NULL AS STRING) AS sync_mode,
+        e.convert_method,
+        CAST(NULL AS STRING) AS s3_uri,
+        e.match_status,
+        e.asesornombre,
+        e.asesorusuario,
+        e.asesorcodigo,
+        e.ndoc,
+        e.nombresusuario,
+        e.numcelular,
+        e.clientetipo,
+        e.`database`
+      FROM `{TABLE_ENRICHED}` AS e
+      INNER JOIN wanted w ON w.uri = e.gcs_uri
+    ),
+    catalog AS (
+      SELECT * EXCEPT(rn)
+      FROM (
+        SELECT
+          COALESCE(c.fecha_audio, CURRENT_DATE('America/Lima')) AS process_date,
+          c.gcs_uri,
+          c.file_name,
+          COALESCE(c.source_file_name, c.file_name) AS source_file_name,
+          COALESCE(c.source_file_name, c.file_name) AS audio,
+          CAST(NULL AS STRING) AS recordid,
+          CAST(NULL AS INT64) AS rowid,
+          CAST(NULL AS STRING) AS codagencia,
+          c.gcs_path,
+          c.campus_code,
+          c.type_code,
+          c.correlative,
+          c.file_size_bytes,
+          c.duration_seconds,
+          c.sync_mode,
+          c.convert_method,
+          c.s3_uri,
+          'GCS_ONLY' AS match_status,
+          CAST(NULL AS STRING) AS asesornombre,
+          CAST(NULL AS STRING) AS asesorusuario,
+          CAST(NULL AS STRING) AS asesorcodigo,
+          CAST(NULL AS STRING) AS ndoc,
+          CAST(NULL AS STRING) AS nombresusuario,
+          CAST(NULL AS STRING) AS numcelular,
+          CAST(NULL AS STRING) AS clientetipo,
+          CAST(NULL AS STRING) AS `database`,
+          ROW_NUMBER() OVER (PARTITION BY c.gcs_uri ORDER BY c.fecha_procesamiento DESC) AS rn
+        FROM `{TABLE_CATALOG}` AS c
+        INNER JOIN wanted w ON w.uri = c.gcs_uri
+        WHERE c.gcs_uri NOT IN (SELECT gcs_uri FROM enriched)
+      )
+      WHERE rn = 1
+    )
+    SELECT * FROM enriched
+    UNION ALL
+    SELECT * FROM catalog
+    """
+    job = bq_client.query(
+        sql,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ArrayQueryParameter("uris", "STRING", uris)]
+        ),
+    )
+    found = {row["gcs_uri"]: dict(row.items()) for row in job.result()}
+
+    items = []
+    for uri in uris:
+        if uri in found:
+            items.append(found[uri])
+            continue
+        base = os.path.basename(uri)
+        items.append(
+            {
+                "process_date": date.today().isoformat(),
+                "gcs_uri": uri,
+                "file_name": base,
+                "source_file_name": re.sub(r"_s\d+\.", ".", base),
+                "audio": re.sub(r"_s\d+\.", ".", base),
+                "recordid": None,
+                "rowid": None,
+                "codagencia": None,
+                "gcs_path": None,
+                "campus_code": None,
+                "type_code": None,
+                "correlative": None,
+                "file_size_bytes": None,
+                "duration_seconds": None,
+                "sync_mode": None,
+                "convert_method": None,
+                "s3_uri": None,
+                "match_status": "GCS_ONLY",
+                "asesornombre": None,
+                "asesorusuario": None,
+                "asesorcodigo": None,
+                "ndoc": None,
+                "nombresusuario": None,
+                "numcelular": None,
+                "clientetipo": None,
+                "database": None,
+            }
+        )
+        logger.warning("URI sin metadata BQ (stub): %s", uri)
+    return items
+
+
+# ---------------------------------------------------------------------------
+# Whisper
+# ---------------------------------------------------------------------------
+def load_audio_as_mono_wav(src_path: str, wav_path: str) -> tuple[int, int]:
+    audio = AudioSegment.from_file(src_path)
+    channels_original = audio.channels
+    if channels_original > 1:
+        logger.warning("  Audio con %s canales; se mezcla a mono.", channels_original)
+        audio = audio.set_channels(1)
+    audio.export(wav_path, format="wav")
+    return len(audio), channels_original
+
+
+def transcribe_uri(
+    storage_client: storage.Client,
+    meta: dict,
+    tmpdir: str,
+    model: WhisperModel,
+) -> dict:
+    uri = meta["gcs_uri"]
+    bucket_name, blob_name = uri[5:].split("/", 1)
+    blob = storage_client.bucket(bucket_name).blob(blob_name)
+
+    suffix = Path(blob_name).suffix.lower() or ".flac"
+    local_audio = os.path.join(tmpdir, f"{Path(blob_name).stem}{suffix}")
+    blob.download_to_filename(local_audio)
+
+    wav_path = os.path.join(tmpdir, f"{Path(blob_name).stem}_mono.wav")
+    duration_ms, channels_original = load_audio_as_mono_wav(local_audio, wav_path)
+
+    segments_iter, info = model.transcribe(
+        wav_path,
+        language="es",
+        task="transcribe",
+        word_timestamps=True,
+        initial_prompt=WHISPER_INITIAL_PROMPT,
+        condition_on_previous_text=True,
+        temperature=0.0,
+        beam_size=5,
+        vad_filter=True,
+        vad_parameters=dict(
+            threshold=0.5,
+            min_speech_duration_ms=250,
+            max_speech_duration_s=float("inf"),
+            min_silence_duration_ms=500,
+            speech_pad_ms=200,
+        ),
+    )
+    raw_segments = list(segments_iter)
+    segments = filter_segments(raw_segments)
+    transcripcion = build_transcripcion_mmss(segments)
+
+    whisper_payload = {
+        "engine": "faster-whisper",
+        "model": WHISPER_MODEL,
+        "language": getattr(info, "language", "es"),
+        "locale_bias": "es-PE",
+        "initial_prompt_preview": WHISPER_INITIAL_PROMPT[:160],
+        "duration": getattr(info, "duration", duration_ms / 1000.0),
+        "segments_raw": len(raw_segments),
+        "segments_kept": len(segments),
+        "channels_original": channels_original,
+    }
+
+    process_date = meta.get("process_date")
+    if hasattr(process_date, "isoformat"):
+        process_date = process_date.isoformat()
+
+    duration_seconds = meta.get("duration_seconds")
+    if duration_seconds is None:
+        duration_seconds = round(duration_ms / 1000.0, 3)
+
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+
+    return {
+        "process_date": process_date or date.today().isoformat(),
+        "gcs_uri": uri,
+        "file_name": meta.get("file_name"),
+        "source_file_name": meta.get("source_file_name"),
+        "audio": meta.get("audio"),
+        "recordid": meta.get("recordid"),
+        "rowid": meta.get("rowid"),
+        "codagencia": meta.get("codagencia"),
+        "gcs_path": meta.get("gcs_path"),
+        "campus_code": meta.get("campus_code"),
+        "type_code": meta.get("type_code"),
+        "correlative": meta.get("correlative"),
+        "file_size_bytes": meta.get("file_size_bytes"),
+        "duration_seconds": duration_seconds,
+        "sync_mode": meta.get("sync_mode"),
+        "convert_method": meta.get("convert_method"),
+        "s3_uri": meta.get("s3_uri"),
+        "match_status": meta.get("match_status"),
+        "asesornombre": meta.get("asesornombre"),
+        "asesorusuario": meta.get("asesorusuario"),
+        "asesorcodigo": meta.get("asesorcodigo"),
+        "ndoc": meta.get("ndoc"),
+        "nombresusuario": meta.get("nombresusuario"),
+        "numcelular": meta.get("numcelular"),
+        "clientetipo": meta.get("clientetipo"),
+        "database": meta.get("database"),
+        "json_text": json.dumps(whisper_payload, ensure_ascii=False),
+        "full_response": json.dumps(whisper_payload, ensure_ascii=False),
+        "status": "OK" if transcripcion else "EMPTY",
+        "transcripcion": transcripcion,
+        "transcripcion_con_hablantes": None,  # Counter mono; prompt usa [MM:SS]
+        "resumen": None,
+        "intencion": None,
+        "idioma": "es",
+        "tono": None,
+        "entidades": None,
+        "observaciones": f"whisper:{WHISPER_MODEL}",
+        "load_date": now_utc,
+        "_parent_key": parent_key_from_names(meta.get("source_file_name"), meta.get("file_name")),
+        "_segment_ord": segment_ord_from_file_name(meta.get("file_name")),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Persistencia hist (mismas tablas STT)
+# ---------------------------------------------------------------------------
+def load_rows_to_hist(bq_client: bigquery.Client, rows: list[dict]) -> None:
+    if not rows:
+        return
+
+    uris = [r["gcs_uri"] for r in rows]
+    parents = sorted({r["_parent_key"] for r in rows if r.get("_parent_key")})
+
+    # 1) RAW: replace por URI
+    del_raw = f"DELETE FROM `{TABLE_RAW}` WHERE gcs_uri IN UNNEST(@uris)"
+    bq_client.query(
+        del_raw,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ArrayQueryParameter("uris", "STRING", uris)]
+        ),
+    ).result()
+    logger.info("RAW: DELETE %s URI(s)", len(uris))
+
+    raw_payload = []
+    for r in rows:
+        raw_payload.append({k: v for k, v in r.items() if not k.startswith("_")})
+
+    # Load job necesita schema flexible; usamos insert vía JSON load a temp + INSERT
+    # Más simple: load_table_from_json con autodetect parcial — mejor INSERT DML por lotes
+    # Para volumen Counter usamos load a tabla temp + INSERT SELECT.
+    tmp_table = f"{PROJECT}.{GCP['dataset_hist']}.tmp_qs_whisper_load_{int(time.time())}_{os.getpid()}"
+    schema = [
+        bigquery.SchemaField("process_date", "DATE"),
+        bigquery.SchemaField("gcs_uri", "STRING"),
+        bigquery.SchemaField("file_name", "STRING"),
+        bigquery.SchemaField("source_file_name", "STRING"),
+        bigquery.SchemaField("audio", "STRING"),
+        bigquery.SchemaField("recordid", "STRING"),
+        bigquery.SchemaField("rowid", "INT64"),
+        bigquery.SchemaField("codagencia", "STRING"),
+        bigquery.SchemaField("gcs_path", "STRING"),
+        bigquery.SchemaField("campus_code", "STRING"),
+        bigquery.SchemaField("type_code", "STRING"),
+        bigquery.SchemaField("correlative", "STRING"),
+        bigquery.SchemaField("file_size_bytes", "INT64"),
+        bigquery.SchemaField("duration_seconds", "FLOAT64"),
+        bigquery.SchemaField("sync_mode", "STRING"),
+        bigquery.SchemaField("convert_method", "STRING"),
+        bigquery.SchemaField("s3_uri", "STRING"),
+        bigquery.SchemaField("match_status", "STRING"),
+        bigquery.SchemaField("asesornombre", "STRING"),
+        bigquery.SchemaField("asesorusuario", "STRING"),
+        bigquery.SchemaField("asesorcodigo", "STRING"),
+        bigquery.SchemaField("ndoc", "STRING"),
+        bigquery.SchemaField("nombresusuario", "STRING"),
+        bigquery.SchemaField("numcelular", "STRING"),
+        bigquery.SchemaField("clientetipo", "STRING"),
+        bigquery.SchemaField("database", "STRING"),
+        bigquery.SchemaField("json_text", "STRING"),
+        bigquery.SchemaField("full_response", "STRING"),
+        bigquery.SchemaField("status", "STRING"),
+        bigquery.SchemaField("transcripcion", "STRING"),
+        bigquery.SchemaField("transcripcion_con_hablantes", "STRING"),
+        bigquery.SchemaField("resumen", "STRING"),
+        bigquery.SchemaField("intencion", "STRING"),
+        bigquery.SchemaField("idioma", "STRING"),
+        bigquery.SchemaField("tono", "STRING"),
+        bigquery.SchemaField("entidades", "STRING"),
+        bigquery.SchemaField("observaciones", "STRING"),
+        bigquery.SchemaField("load_date", "DATETIME"),
+    ]
+
+    job_config = bigquery.LoadJobConfig(
+        schema=schema,
+        write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+    )
+    bq_client.load_table_from_json(raw_payload, tmp_table, job_config=job_config).result()
+
+    insert_raw = f"""
+    INSERT INTO `{TABLE_RAW}` (
+      process_date, gcs_uri, file_name, source_file_name, audio,
+      recordid, rowid, codagencia, gcs_path, campus_code, type_code, correlative,
+      file_size_bytes, duration_seconds, sync_mode, convert_method, s3_uri, match_status,
+      asesornombre, asesorusuario, asesorcodigo, ndoc, nombresusuario, numcelular,
+      clientetipo, `database`, json_text, full_response, status,
+      transcripcion, transcripcion_con_hablantes, resumen, intencion, idioma, tono,
+      entidades, observaciones, load_date
+    )
+    SELECT
+      process_date, gcs_uri, file_name, source_file_name, audio,
+      recordid, rowid, codagencia, gcs_path, campus_code, type_code, correlative,
+      file_size_bytes, duration_seconds, sync_mode, convert_method, s3_uri, match_status,
+      asesornombre, asesorusuario, asesorcodigo, ndoc, nombresusuario, numcelular,
+      clientetipo, `database`, json_text, full_response, status,
+      transcripcion, transcripcion_con_hablantes, resumen, intencion, idioma, tono,
+      entidades, observaciones, load_date
+    FROM `{tmp_table}`
+    """
+    bq_client.query(insert_raw).result()
+    bq_client.delete_table(tmp_table, not_found_ok=True)
+    logger.info("RAW: INSERT %s fila(s)", len(raw_payload))
+
+    if not parents:
+        return
+
+    # 2) PRD: rebuild padres (misma lógica de merge de segmentos que el SP)
+    del_prd = f"""
+    DELETE FROM `{TABLE_PRD}`
+    WHERE source_file_name IN UNNEST(@parents)
+       OR gcs_uri IN UNNEST(@uris)
+    """
+    bq_client.query(
+        del_prd,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("parents", "STRING", parents),
+                bigquery.ArrayQueryParameter("uris", "STRING", uris),
+            ]
+        ),
+    ).result()
+
+    insert_prd = f"""
+    INSERT INTO `{TABLE_PRD}` (
+      process_date, gcs_uri, file_name, source_file_name, audio,
+      recordid, rowid, codagencia, campus_code, type_code, correlative,
+      file_size_bytes, duration_seconds, match_status,
+      asesornombre, asesorusuario, asesorcodigo, ndoc, nombresusuario, numcelular,
+      clientetipo, `database`, transcripcion, transcripcion_con_hablantes,
+      resumen, intencion, idioma, tono, entidades, observaciones, load_date
+    )
+    WITH base AS (
+      SELECT *
+      FROM `{TABLE_RAW}`
+      WHERE gcs_uri IN UNNEST(@uris)
+         OR source_file_name IN UNNEST(@parents)
+    ),
+    keyed AS (
+      SELECT
+        *,
+        COALESCE(
+          NULLIF(TRIM(source_file_name), ''),
+          REGEXP_REPLACE(file_name, r'_s\\d+\\.', '.')
+        ) AS stt_parent_key,
+        SAFE_CAST(REGEXP_EXTRACT(file_name, r'_s(\\d+)\\.') AS INT64) AS segment_ord
+      FROM base
+    ),
+    merged AS (
+      SELECT
+        stt_parent_key,
+        ANY_VALUE(process_date) AS process_date,
+        MIN(gcs_uri) AS gcs_uri,
+        ANY_VALUE(source_file_name) AS source_file_name,
+        ANY_VALUE(file_name) AS file_name,
+        ANY_VALUE(audio) AS audio,
+        ANY_VALUE(recordid) AS recordid,
+        ANY_VALUE(rowid) AS rowid,
+        ANY_VALUE(codagencia) AS codagencia,
+        ANY_VALUE(campus_code) AS campus_code,
+        ANY_VALUE(type_code) AS type_code,
+        ANY_VALUE(correlative) AS correlative,
+        SUM(file_size_bytes) AS file_size_bytes,
+        SUM(duration_seconds) AS duration_seconds,
+        ANY_VALUE(match_status) AS match_status,
+        ANY_VALUE(asesornombre) AS asesornombre,
+        ANY_VALUE(asesorusuario) AS asesorusuario,
+        ANY_VALUE(asesorcodigo) AS asesorcodigo,
+        ANY_VALUE(ndoc) AS ndoc,
+        ANY_VALUE(nombresusuario) AS nombresusuario,
+        ANY_VALUE(numcelular) AS numcelular,
+        ANY_VALUE(clientetipo) AS clientetipo,
+        ANY_VALUE(`database`) AS `database`,
+        STRING_AGG(
+          NULLIF(TRIM(transcripcion), ''),
+          '\\n'
+          ORDER BY segment_ord NULLS FIRST, gcs_uri
+        ) AS transcripcion,
+        STRING_AGG(
+          NULLIF(TRIM(transcripcion_con_hablantes), ''),
+          '\\n'
+          ORDER BY segment_ord NULLS FIRST, gcs_uri
+        ) AS transcripcion_con_hablantes,
+        ANY_VALUE(resumen) AS resumen,
+        ANY_VALUE(intencion) AS intencion,
+        ANY_VALUE(idioma) AS idioma,
+        ANY_VALUE(tono) AS tono,
+        ANY_VALUE(entidades) AS entidades,
+        ANY_VALUE(observaciones) AS observaciones,
+        MAX(load_date) AS load_date
+      FROM keyed
+      WHERE stt_parent_key IN UNNEST(@parents)
+      GROUP BY stt_parent_key
+    )
+    SELECT
+      process_date, gcs_uri, file_name, source_file_name, audio,
+      recordid, rowid, codagencia, campus_code, type_code, correlative,
+      file_size_bytes, duration_seconds, match_status,
+      asesornombre, asesorusuario, asesorcodigo, ndoc, nombresusuario, numcelular,
+      clientetipo, `database`, transcripcion, transcripcion_con_hablantes,
+      resumen, intencion, idioma, tono, entidades, observaciones, load_date
+    FROM merged
+    WHERE NULLIF(TRIM(transcripcion), '') IS NOT NULL
+    """
+    bq_client.query(
+        insert_prd,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("parents", "STRING", parents),
+                bigquery.ArrayQueryParameter("uris", "STRING", uris),
+            ]
+        ),
+    ).result()
+    logger.info("PRD: rebuild de %s padre(s)", len(parents))
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+def main() -> None:
+    is_list = bool(GCS_URIS)
+    is_day = bool(FECHA_AUDIO)
+
+    if not is_list and not is_day:
+        raise ValueError(
+            "Requiere FECHA_AUDIO=YYYY-MM-DD o GCS_URIS=gs://a,gs://b"
+        )
+    if is_day and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", FECHA_AUDIO):
+        raise ValueError(f"FECHA_AUDIO inválida: {FECHA_AUDIO!r}")
+
+    logger.info(
+        "=== QueueSmart Whisper → hist STT | modo=%s ===",
+        f"LISTA" if is_list else f"DÍA {FECHA_AUDIO}",
+    )
+
+    mapped = MODEL_MAP.get(WHISPER_MODEL, WHISPER_MODEL)
+    t0 = time.time()
+    model = WhisperModel(mapped, device="cpu", compute_type="int8")
+    logger.info("Whisper '%s' en %.1fs", mapped, time.time() - t0)
+
+    storage_client = storage.Client(project=PROJECT)
+    bq_client = bigquery.Client(project=PROJECT)
+
+    if is_list:
+        uris = [u.strip() for u in GCS_URIS.split(",") if u.strip()]
+        work_items = fetch_work_items_for_uris(bq_client, uris)
+    else:
+        work_items = fetch_work_items_for_date(bq_client, FECHA_AUDIO)
+
+    if not work_items:
+        logger.warning("Sin audios para procesar. Fin.")
+        return
+
+    # Agrupar por padre para no partir _s01/_s02 entre tasks
+    parents_order: list[str] = []
+    by_parent: dict[str, list[dict]] = {}
+    for item in work_items:
+        pk = parent_key_from_names(item.get("source_file_name"), item.get("file_name"))
+        if pk not in by_parent:
+            by_parent[pk] = []
+            parents_order.append(pk)
+        by_parent[pk].append(item)
+
+    task_index = int(os.environ.get("CLOUD_RUN_TASK_INDEX", "0"))
+    task_count = int(os.environ.get("CLOUD_RUN_TASK_COUNT", "1"))
+    my_parents = [
+        p for idx, p in enumerate(parents_order) if idx % task_count == task_index
+    ]
+    logger.info(
+        "Tarea %s/%s → %s padres de %s (archivos día=%s)",
+        task_index,
+        task_count,
+        len(my_parents),
+        len(parents_order),
+        len(work_items),
+    )
+    if not my_parents:
+        return
+
+    rows: list[dict] = []
+    for p_idx, parent in enumerate(my_parents, start=1):
+        segs = by_parent[parent]
+        logger.info(
+            "[Tarea %s | padre %s/%s] %s (%s segmento(s))",
+            task_index,
+            p_idx,
+            len(my_parents),
+            parent,
+            len(segs),
+        )
+        for meta in segs:
+            uri = meta["gcs_uri"]
+            try:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    row = transcribe_uri(storage_client, meta, tmpdir, model)
+                rows.append(row)
+                logger.info("  ✓ %s (%s chars)", uri, len(row.get("transcripcion") or ""))
+            except Exception as e:
+                logger.error("  ✗ %s: %s", uri, e, exc_info=True)
+
+    if rows:
+        load_rows_to_hist(bq_client, rows)
+    else:
+        logger.warning("Tarea %s: sin filas.", task_index)
+
+    logger.info("=== Fin | %s segmentos cargados a hist STT ===", len(rows))
+
+
+if __name__ == "__main__":
+    main()

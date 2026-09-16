@@ -116,7 +116,7 @@ WHISPER_NUM_WORKERS = max(1, _env_int("WHISPER_NUM_WORKERS", 1))
 # Mantener corto: Whisper solo usa ~224 tokens del prompt.
 _DEFAULT_WHISPER_INITIAL_PROMPT = (
     "Conversación presencial en un counter de la Universidad Tecnológica del Perú (UTP), "
-    "en español de Perú (acento limeño/costeño). "
+    "en español de Perú (variedades de distintas regiones: costa, sierra y selva). "
     "Hablan un asesor de admisiones y un postulante o apoderado. "
     "Vocabulario frecuente: matrícula, pensión, boleta, voucher, Yape, Plin, agente BCP, "
     "carrera, modalidad a distancia, semipresencial, turno noche, malla curricular, "

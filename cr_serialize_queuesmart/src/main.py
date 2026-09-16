@@ -34,6 +34,7 @@ import tempfile
 import time
 from datetime import date, datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from faster_whisper import WhisperModel
@@ -173,37 +174,149 @@ logger.info(
 
 
 # ---------------------------------------------------------------------------
-# Anti-alucinación
+# Anti-alucinación / colapso de bucles (Whisper CPU)
 # ---------------------------------------------------------------------------
-def _detect_intra_segment_loop(text: str) -> bool:
+# El loop clásico no empieza al inicio del segmento ("Bueno, en este caso, en este
+# caso…", "certificado de certificado de…", "sí, sí, sí…"). Antes se descartaba
+# el segmento entero; ahora se colapsa la repetición y se conserva el resto.
+
+_MAX_PHRASE_LEN = 8
+# Conservador para evaluación Gemini: solo bucles patológicos de Whisper.
+# 2 repeticiones reales ("sí, sí" / "claro, claro") NO se tocan.
+_COLLAPSE_MIN_REPS = 4
+_COLLAPSE_MAX_KEEP = 2
+# Monosílabos / muletillas: hace falta más repetición para colapsar
+_SHORT_TOKEN_MIN_REPS = 6
+
+
+def collapse_repetitions(text: str, *, max_keep: int = _COLLAPSE_MAX_KEEP) -> str:
+    """
+    Colapsa n-gramas consecutivos claramente alucinados (Whisper loop).
+    Conserva 2 copias para no inventar ni borrar énfasis real del counter.
+    No toca 2 repeticiones normales ("sí, sí", "ya, ya").
+    """
+    if not text or not text.strip():
+        return text
+
     words = text.split()
+    if len(words) >= 4:
+        words = _collapse_word_runs(words, max_keep=max_keep)
+        text = " ".join(words)
+
+    # 008-008-008 / 945-945-945 (token con separador, ≥3 copias)
+    text = re.sub(
+        r"\b([A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9]{1,24})(?:\s*([-/_,.])\s*\1){2,}\b",
+        lambda m: (m.group(1) + m.group(2)) * (max_keep - 1) + m.group(1),
+        text,
+    )
+    text = re.sub(r"\s{2,}", " ", text).strip()
+    return text
+
+
+def _norm_token(w: str) -> str:
+    return re.sub(r"[^\wáéíóúüñÁÉÍÓÚÜÑ]+", "", w, flags=re.UNICODE).lower()
+
+
+def _min_reps_for_phrase(phrase: list[str]) -> int:
+    """Muletillas de 1 token necesitan más reps; frases largas bastan con 4."""
+    if len(phrase) == 1 and len(_norm_token(phrase[0])) <= 4:
+        return _SHORT_TOKEN_MIN_REPS
+    return _COLLAPSE_MIN_REPS
+
+
+def _collapse_word_runs(words: list[str], *, max_keep: int) -> list[str]:
     n = len(words)
-    if n < 6:
-        return False
-    for pattern_len in range(1, n // 4 + 1):
-        pattern = words[:pattern_len]
-        reps = 0
-        for i in range(0, n - pattern_len + 1, pattern_len):
-            if words[i : i + pattern_len] == pattern:
+    out: list[str] = []
+    i = 0
+    while i < n:
+        max_len = min(_MAX_PHRASE_LEN, (n - i) // 3)
+        # Preferir el patrón con MÁS repeticiones (unidad más pequeña del loop).
+        best: tuple[int, int, int, list[str]] | None = None  # reps, -len, j, phrase
+        for length in range(1, max_len + 1):
+            phrase = words[i : i + length]
+            phrase_norm = [_norm_token(w) for w in phrase]
+            if not any(phrase_norm):
+                continue
+            need = _min_reps_for_phrase(phrase)
+            reps = 1
+            j = i + length
+            while j + length <= n:
+                nxt = [_norm_token(w) for w in words[j : j + length]]
+                if nxt != phrase_norm:
+                    break
                 reps += 1
-            else:
-                break
-        if reps >= 4:
-            return True
-    return False
+                j += length
+            if reps >= need:
+                cand = (reps, -length, j, phrase)
+                if best is None or cand[:2] > best[:2]:
+                    best = cand
+        if best is not None:
+            _reps, _neg_len, j, phrase = best
+            keep = min(_reps, max_keep)
+            for _ in range(keep):
+                out.extend(phrase)
+            i = j
+        else:
+            out.append(words[i])
+            i += 1
+    return out
+
+
+def _segment_with_text(seg: Any, text: str) -> Any:
+    return SimpleNamespace(
+        id=getattr(seg, "id", None),
+        seek=getattr(seg, "seek", None),
+        start=float(getattr(seg, "start", 0.0) or 0.0),
+        end=float(getattr(seg, "end", 0.0) or 0.0),
+        text=text,
+        tokens=getattr(seg, "tokens", None),
+        avg_logprob=getattr(seg, "avg_logprob", None),
+        compression_ratio=getattr(seg, "compression_ratio", None),
+        no_speech_prob=float(getattr(seg, "no_speech_prob", 0.0) or 0.0),
+    )
 
 
 def filter_segments(raw_segments: list) -> list:
     filtered = []
     for seg in raw_segments:
-        text_strip = seg.text.strip()
+        text_strip = (seg.text or "").strip()
+        if not text_strip:
+            continue
         text_lower = text_strip.lower()
         if seg.no_speech_prob > NO_SPEECH_PROB_THRESHOLD:
             continue
         if text_lower in HALLUCINATION_PHRASES:
             continue
-        if _detect_intra_segment_loop(text_strip):
+
+        collapsed = collapse_repetitions(text_strip)
+        # Si tras colapsar queda casi vacío o solo basura muy corta de loop puro → drop
+        if not collapsed.strip():
             continue
+        # Ratio extremo: texto original >> colapsado (bucle masivo) y colapsado muy corto
+        if (
+            len(text_strip) > 80
+            and len(collapsed) < 24
+            and len(text_strip) >= 8 * max(len(collapsed), 1)
+        ):
+            logger.info(
+                "  Drop segmento loop extremo (%.1fs-%.1fs) raw=%s collapsed=%s",
+                float(seg.start),
+                float(seg.end),
+                len(text_strip),
+                len(collapsed),
+            )
+            continue
+
+        if collapsed != text_strip:
+            logger.debug(
+                "  Collapse loop %.1fs-%.1fs: %s→%s chars",
+                float(seg.start),
+                float(seg.end),
+                len(text_strip),
+                len(collapsed),
+            )
+            seg = _segment_with_text(seg, collapsed)
+
         filtered.append(seg)
 
     consecutive_limit = 2
@@ -258,11 +371,13 @@ def build_transcripcion_mmss(segments: list) -> str:
         if not current_words:
             return
         stamp = seconds_to_mmss(block_start)
-        blocks.append(f"[{stamp}] {' '.join(current_words).strip()}")
+        body = collapse_repetitions(" ".join(current_words).strip())
+        if body:
+            blocks.append(f"[{stamp}] {body}")
         current_words = []
 
     for seg in segments:
-        text = seg.text.strip()
+        text = collapse_repetitions(seg.text.strip())
         if not text:
             continue
         gap = float(seg.start) - prev_end
@@ -650,6 +765,8 @@ def transcribe_uri(
             condition_on_previous_text=WHISPER_CONDITION_ON_PREVIOUS,
             temperature=0.0,
             beam_size=WHISPER_BEAM_SIZE,
+            # Default Whisper 2.4; no bajar: riesgo de tirar segmentos válidos para evaluación
+            compression_ratio_threshold=2.4,
             vad_filter=True,
             vad_parameters=dict(
                 threshold=0.5,

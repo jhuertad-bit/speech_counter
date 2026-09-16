@@ -4,22 +4,24 @@
 # Activador Cloud Build (repo root, config: cr_serialize_queuesmart/cloudbuild.yaml)
 # Variables de sustitución — PRD VASO (shadow, no toca hist Chirp):
 #   _PROJECT_ID=prd-utpbi-data-operation
-#   _JOB_NAME=prd-utpbi-queuesmart-audio-serialize-whisper-vaso
+#   _JOB_NAME=prd-utpbi-queuesmart-audio-serialize-whisper
 #   _SERVICE_ACCOUNT=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
 #   _BUCKET_NAME=prd-utp-stg-queuesmart
 #   _DATASET_RAW_QUEUE=raw_queue_smart
 #   _DATASET_HIST=adf_speech_analytics
 #   _TABLE_HIST_RAW=hist_queuesmart_mp3_whisper_vaso_raw
 #   _TABLE_HIST_PRD=hist_queuesmart_mp3_whisper_vaso_prd
+#   _TABLE_ENRICHED=queuesmart_mp3_enriched_vaso
+#   _TABLE_CATALOG=hist_queesmart_mp3_catalog_vaso
 #   _LOCATION=us-central1
 #   _MEMORY=16Gi
 #   _CPU=4
 #   _TASK_TIMEOUT=14400s
 #   _WHISPER_MODEL=turbo
 #
-# Lee audios/tickets de PRD (enriched/catalog). Escribe SOLO tablas vaso.
+# Lee enriched/catalog vaso. Escribe SOLO tablas whisper vaso.
 # Crear tablas antes del primer run:
-#   < cr_serialize_queuesmart/bigquery/tables/hist_queuesmart_mp3_whisper_vaso.sql
+#   < queuesmart_vaso/bigquery/tables/hist_queuesmart_mp3_whisper_vaso.sql
 #
 # La SA del Job necesita:
 #   - storage.objectViewer (o Admin) en _BUCKET_NAME
@@ -29,7 +31,7 @@
 substitutions:
   _LOCATION: 'us-central1'
   _SOURCE_DIR: 'cr_serialize_queuesmart/src'
-  _IMAGE_NAME: 'queuesmart-audio-serialize-whisper-vaso'
+  _IMAGE_NAME: 'queuesmart-audio-serialize-whisper'
   _MEMORY: '16Gi'
   _CPU: '4'
   _TASK_TIMEOUT: '14400s'
@@ -40,8 +42,8 @@ substitutions:
   _DATASET_HIST: 'adf_speech_analytics'
   _TABLE_HIST_RAW: 'hist_queuesmart_mp3_whisper_vaso_raw'
   _TABLE_HIST_PRD: 'hist_queuesmart_mp3_whisper_vaso_prd'
-  _TABLE_ENRICHED: 'queuesmart_mp3_enriched'
-  _TABLE_CATALOG: 'hist_queesmart_mp3_catalog'
+  _TABLE_ENRICHED: 'queuesmart_mp3_enriched_vaso'
+  _TABLE_CATALOG: 'hist_queesmart_mp3_catalog_vaso'
 
 timeout: 3600s
 

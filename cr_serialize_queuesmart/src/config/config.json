@@ -1,7 +1,7 @@
 {
     "gcp": {
         "project_id": "prd-utpbi-data-operation",
-        "cloud_run_job_name": "prd-utpbi-queuesmart-audio-serialize-whisper-vaso",
+        "cloud_run_job_name": "prd-utpbi-queuesmart-audio-serialize-whisper",
         "region": "us-central1",
         "bucket_audio": "prd-utp-stg-queuesmart",
         "path_audio": "queuesmart_mp3_s3/YYYY-MM-DD",
@@ -12,6 +12,6 @@
         "table_enriched": "queuesmart_mp3_enriched_vaso",
         "table_catalog": "hist_queesmart_mp3_catalog_vaso",
         "service_account_email": "genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com",
-        "docker_image_repository": "gcr.io/prd-utpbi-data-operation/queuesmart-audio-serialize-whisper-vaso"
+        "docker_image_repository": "gcr.io/prd-utpbi-data-operation/queuesmart-audio-serialize-whisper"
     }
 }

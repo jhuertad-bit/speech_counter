@@ -1,0 +1,25 @@
+{
+  "gcp": {
+    "project_id": "prd-utpbi-data-operation",
+    "region": "us-central1",
+    "dataset": "raw_cita_promotor",
+    "service_account_email": "genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com",
+    "docker_image_repository": "gcr.io/prd-utpbi-data-operation/cita-audio-serialize-whisper"
+  },
+  "canales": {
+    "promotor": {
+      "cloud_run_job_name": "prd-utpbi-cita-promotor-audio-serialize-whisper",
+      "bucket_audio": "prd-utp-stg-citapromotor-9bd1430535b8",
+      "table_catalog": "hist_cita_promotor_audio_catalog",
+      "table_whisper_raw": "hist_cita_promotor_audio_whisper_raw",
+      "table_whisper_prd": "hist_cita_promotor_audio_whisper_prd"
+    },
+    "mentor": {
+      "cloud_run_job_name": "prd-utpbi-cita-mentor-audio-serialize-whisper",
+      "bucket_audio": "prd-utp-stg-mentores",
+      "table_catalog": "hist_cita_mentor_audio_catalog",
+      "table_whisper_raw": "hist_cita_mentor_audio_whisper_raw",
+      "table_whisper_prd": "hist_cita_mentor_audio_whisper_prd"
+    }
+  }
+}

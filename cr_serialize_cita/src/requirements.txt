@@ -1,0 +1,11 @@
+# ============================================================
+# Cloud Run Job: cr_serialize_cita
+# Whisper LOCAL — Cita Promotor / Mentores (m4a desde catálogo GCS)
+# ============================================================
+
+setuptools>=68.0.0
+faster-whisper==1.0.3
+pydub==0.25.1
+google-cloud-storage==2.16.0
+google-cloud-bigquery==3.20.1
+numpy<2.0

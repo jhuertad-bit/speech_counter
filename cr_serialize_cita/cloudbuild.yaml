@@ -1,0 +1,72 @@
+# Cloud Build: imagen Whisper Cita + deploy Jobs promotor y mentor.
+#
+# Sustituciones:
+#   _PROJECT_ID, _SERVICE_ACCOUNT
+#   _IMAGE_NAME=cita-audio-serialize-whisper
+#   _DEPLOY_CANALES=promotor,mentor
+#
+# Tablas (una vez):
+#   < cr_serialize_cita/bigquery/tables/hist_cita_audio_whisper.sql
+
+substitutions:
+  _LOCATION: 'us-central1'
+  _SOURCE_DIR: 'cr_serialize_cita/src'
+  _IMAGE_NAME: 'cita-audio-serialize-whisper'
+  _MEMORY: '32Gi'
+  _CPU: '8'
+  _TASK_TIMEOUT: '86400s'
+  _MAX_RETRIES: '1'
+  _PARALLELISM: '10'
+  _WHISPER_MODEL: 'turbo'
+  _DATASET: 'raw_cita_promotor'
+  _DEPLOY_CANALES: 'promotor,mentor'
+
+timeout: 3600s
+
+options:
+  machineType: 'E2_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - id: 'build-image'
+    name: 'gcr.io/cloud-builders/docker'
+    dir: '${_SOURCE_DIR}'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:latest'
+      - '.'
+
+  - id: 'push-latest'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:latest']
+
+  - id: 'push-build-id'
+    name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID']
+
+  - id: 'deploy-jobs'
+    name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - 'cr_serialize_cita/scripts/cloudbuild_deploy.sh'
+    env:
+      - '_PROJECT_ID=${_PROJECT_ID}'
+      - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '_LOCATION=${_LOCATION}'
+      - '_IMAGE_NAME=${_IMAGE_NAME}'
+      - '_IMAGE_TAG=$BUILD_ID'
+      - '_MEMORY=${_MEMORY}'
+      - '_CPU=${_CPU}'
+      - '_TASK_TIMEOUT=${_TASK_TIMEOUT}'
+      - '_MAX_RETRIES=${_MAX_RETRIES}'
+      - '_PARALLELISM=${_PARALLELISM}'
+      - '_WHISPER_MODEL=${_WHISPER_MODEL}'
+      - '_DATASET=${_DATASET}'
+      - '_DEPLOY_CANALES=${_DEPLOY_CANALES}'
+
+images:
+  - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID'
+  - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:latest'

@@ -30,7 +30,7 @@ cr_serialize_queuesmart/
 Default Cloud Run Job: **32Gi / 8 CPU**, **parallelism=10**, **task-timeout=24h**.
 
 Whisper (defaults rápidos, override por env):
-- `WHISPER_BEAM_SIZE=3`
+- `WHISPER_BEAM_SIZE=1` (velocidad; subir a 3 si quieres más calidad)
 - `WHISPER_WORD_TIMESTAMPS=false` (timestamps por segmento → `[MM:SS]`)
 - `WHISPER_CONDITION_ON_PREVIOUS=false`
 - `cpu_threads` = CPUs del contenedor

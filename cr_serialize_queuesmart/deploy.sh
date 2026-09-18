@@ -65,7 +65,7 @@ COMMON_FLAGS=(
     --cpu="8"
     --task-timeout="86400s"
     --max-retries="1"
-    --set-env-vars="WHISPER_MODEL=$WHISPER_MODEL,WHISPER_BEAM_SIZE=3,WHISPER_WORD_TIMESTAMPS=false,WHISPER_CONDITION_ON_PREVIOUS=false"
+    --set-env-vars="WHISPER_MODEL=$WHISPER_MODEL,WHISPER_BEAM_SIZE=1,WHISPER_WORD_TIMESTAMPS=false,WHISPER_CONDITION_ON_PREVIOUS=false,WHISPER_DOWNLOAD_ROOT=/app/models,HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1"
     --labels="project=queuesmart,component=serializer-whisper,env=prd,team=data-engineering,cost-center=utpbi"
     --parallelism=10
     --tasks=1

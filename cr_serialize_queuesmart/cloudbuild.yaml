@@ -6,32 +6,26 @@
 #   _JOB_NAME=prd-utpbi-queuesmart-audio-serialize-whisper
 #   _SERVICE_ACCOUNT=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
 #   _BUCKET_NAME=prd-utp-stg-queuesmart
-#   _DATASET_RAW_QUEUE=raw_queue_smart
-#   _DATASET_HIST=adf_speech_analytics
-#   _TABLE_HIST_RAW=hist_queuesmart_mp3_whisper_vaso_raw
-#   _TABLE_HIST_PRD=hist_queuesmart_mp3_whisper_vaso_prd
-#   _TABLE_ENRICHED=queuesmart_mp3_enriched_vaso
-#   _TABLE_CATALOG=hist_queesmart_mp3_catalog_vaso
-#   _LOCATION=us-central1
-#   _MEMORY=32Gi
-#   _CPU=8
-#   _PARALLELISM=10
-#   _TASK_TIMEOUT=86400s
-#   _WHISPER_MODEL=turbo
 #
-# Solo Whisper [MM:SS]. Sin diarización / sin HF_TOKEN.
-# Memoria/CPU altas + parallelism 10: turbo en CPU con varios tasks.
-# task-timeout 24h: un solo task con muchos audios largos no debe morir a 1h.
+# GPU (default):
+#   _USE_GPU=true → Dockerfile.gpu + nvidia-l4
+#   _PARALLELISM=3 (1 GPU por task)
+#
+# CPU:
+#   _USE_GPU=false _DOCKERFILE=Dockerfile _IMAGE_NAME=queuesmart-audio-serialize-whisper
+#   _PARALLELISM=10 _MEMORY=32Gi
 
 substitutions:
   _LOCATION: 'us-central1'
   _SOURCE_DIR: 'cr_serialize_queuesmart/src'
-  _IMAGE_NAME: 'queuesmart-audio-serialize-whisper'
-  _MEMORY: '32Gi'
+  _DOCKERFILE: 'Dockerfile.gpu'
+  _IMAGE_NAME: 'queuesmart-audio-serialize-whisper-gpu'
+  _MEMORY: '16Gi'
   _CPU: '8'
-  _TASK_TIMEOUT: '86400s'
+  # GPU: Cloud Run limita task-timeout a máximo 3600s (1h)
+  _TASK_TIMEOUT: '3600s'
   _MAX_RETRIES: '1'
-  _PARALLELISM: '10'
+  _PARALLELISM: '3'
   _WHISPER_MODEL: 'turbo'
   _DATASET_RAW_QUEUE: 'raw_queue_smart'
   _DATASET_HIST: 'adf_speech_analytics'
@@ -39,6 +33,8 @@ substitutions:
   _TABLE_HIST_PRD: 'hist_queuesmart_mp3_whisper_vaso_prd'
   _TABLE_ENRICHED: 'queuesmart_mp3_enriched_vaso'
   _TABLE_CATALOG: 'hist_queesmart_mp3_catalog_vaso'
+  _USE_GPU: 'true'
+  _GPU_TYPE: 'nvidia-l4'
 
 timeout: 3600s
 
@@ -52,6 +48,8 @@ steps:
     dir: '${_SOURCE_DIR}'
     args:
       - 'build'
+      - '-f'
+      - '${_DOCKERFILE}'
       - '-t'
       - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID'
       - '-t'
@@ -91,6 +89,8 @@ steps:
       - '_TABLE_HIST_PRD=${_TABLE_HIST_PRD}'
       - '_TABLE_ENRICHED=${_TABLE_ENRICHED}'
       - '_TABLE_CATALOG=${_TABLE_CATALOG}'
+      - '_USE_GPU=${_USE_GPU}'
+      - '_GPU_TYPE=${_GPU_TYPE}'
 
 images:
   - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID'

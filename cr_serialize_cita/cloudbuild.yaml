@@ -20,7 +20,8 @@ substitutions:
   _IMAGE_NAME: 'cita-audio-serialize-whisper-gpu'
   _MEMORY: '16Gi'
   _CPU: '8'
-  _TASK_TIMEOUT: '86400s'
+  # GPU: Cloud Run limita task-timeout a máximo 3600s (1h)
+  _TASK_TIMEOUT: '3600s'
   _MAX_RETRIES: '1'
   _PARALLELISM: '3'
   _WHISPER_MODEL: 'turbo'

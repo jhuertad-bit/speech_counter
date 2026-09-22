@@ -17,7 +17,8 @@ _IMAGE_NAME="$(trim "${_IMAGE_NAME:-cita-audio-serialize-whisper-gpu}")"
 _IMAGE_TAG="$(trim "${_IMAGE_TAG:-latest}")"
 _MEMORY="$(trim "${_MEMORY:-16Gi}")"
 _CPU="$(trim "${_CPU:-8}")"
-_TASK_TIMEOUT="$(trim "${_TASK_TIMEOUT:-86400s}")"
+# Con GPU el máximo permitido es 3600s; sin GPU se puede subir a 86400s
+_TASK_TIMEOUT="$(trim "${_TASK_TIMEOUT:-3600s}")"
 _MAX_RETRIES="$(trim "${_MAX_RETRIES:-1}")"
 _PARALLELISM="$(trim "${_PARALLELISM:-3}")"
 _WHISPER_MODEL="$(trim "${_WHISPER_MODEL:-turbo}")"
@@ -91,6 +92,18 @@ deploy_one() {
   local labels="project=cita,component=serializer-whisper,canal=${canal}"
   labels+=",env=prd,team=data-engineering,cost-center=utpbi,accelerator=${accelerator}"
 
+  local task_timeout="${_TASK_TIMEOUT}"
+  if [[ "${USE_GPU}" == "true" ]]; then
+    case "${task_timeout}" in
+      *s) _to="${task_timeout%s}" ;;
+      *) _to="${task_timeout}" ;;
+    esac
+    if [[ "${_to}" =~ ^[0-9]+$ ]] && (( _to > 3600 )); then
+      echo "WARN: GPU limita task-timeout a 3600s (venía ${task_timeout}) → 3600s" >&2
+      task_timeout="3600s"
+    fi
+  fi
+
   local -a deploy_args=(
     --project="${_PROJECT_ID}"
     --region="${_LOCATION}"
@@ -101,7 +114,7 @@ deploy_one() {
     --memory="${_MEMORY}"
     --cpu="${_CPU}"
     --max-retries="${_MAX_RETRIES}"
-    --task-timeout="${_TASK_TIMEOUT}"
+    --task-timeout="${task_timeout}"
     --parallelism="${_PARALLELISM}"
     --tasks=1
   )
@@ -114,7 +127,7 @@ deploy_one() {
     )
   fi
 
-  echo "=== Deploy Job ${job_name} (canal=${canal} device=${whisper_device}) ==="
+  echo "=== Deploy Job ${job_name} (canal=${canal} device=${whisper_device} timeout=${task_timeout}) ==="
   gcloud run jobs deploy "${job_name}" "${deploy_args[@]}"
   echo "OK ${job_name} → ${_DATASET}.${raw} / ${prd} accelerator=${accelerator}"
 }

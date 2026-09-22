@@ -27,24 +27,33 @@ cr_serialize_queuesmart/
 
 ## Recursos
 
-Default Cloud Run Job: **32Gi / 8 CPU**, **parallelism=10**, **task-timeout=24h**.
+Default Cloud Build / Job: **GPU NVIDIA L4**, **16Gi / 8 CPU**, **parallelism=3**, **task-timeout=24h**.
+
+| | GPU (default) | CPU |
+|---|---|---|
+| Dockerfile | `Dockerfile.gpu` | `Dockerfile` |
+| Imagen | `queuesmart-audio-serialize-whisper-gpu` | `queuesmart-audio-serialize-whisper` |
+| Device | `cuda` / `float16` | `cpu` / `int8` |
+| Parallelism | `3` | `10` |
 
 Whisper (defaults rápidos, override por env):
-- `WHISPER_BEAM_SIZE=1` (velocidad; subir a 3 si quieres más calidad)
-- `WHISPER_WORD_TIMESTAMPS=false` (timestamps por segmento → `[MM:SS]`)
+- `WHISPER_BEAM_SIZE=1`
+- `WHISPER_WORD_TIMESTAMPS=false`
 - `WHISPER_CONDITION_ON_PREVIOUS=false`
-- `cpu_threads` = CPUs del contenedor
+- `WHISPER_DEVICE=cuda|cpu`
 
-Workflow: cuenta padres en `enriched_vaso` y lanza `taskCount = min(10, ceil(n/10))`.
-Args opcionales: `whisper_max_tasks`, `whisper_audios_per_task`.
+Workflow: cuenta padres en `enriched_vaso` y lanza `taskCount`. Con GPU deja `whisper_max_tasks` ≤ cuota L4 (p. ej. 3).
 
-Si ves `maximum timeout of 3600 seconds`, el Job en GCP aún tiene 1h — actualizar:
+Si ves `maximum timeout of 3600 seconds`:
 
 ```bash
 gcloud run jobs update prd-utpbi-queuesmart-audio-serialize-whisper \
   --region=us-central1 --project=prd-utpbi-data-operation \
-  --task-timeout=86400s --parallelism=10 --memory=32Gi --cpu=8
+  --task-timeout=86400s --parallelism=3 --memory=16Gi --cpu=8 \
+  --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy
 ```
+
+Volver a CPU en el activador: `_USE_GPU=false,_DOCKERFILE=Dockerfile,_IMAGE_NAME=queuesmart-audio-serialize-whisper,_PARALLELISM=10,_MEMORY=32Gi`.
 
 ## Deploy (Cloud Build)
 

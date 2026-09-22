@@ -1,9 +1,14 @@
 # Cloud Build: imagen Whisper Cita + deploy Jobs promotor y mentor.
 #
-# Sustituciones:
+# Sustituciones obligatorias en el activador:
 #   _PROJECT_ID, _SERVICE_ACCOUNT
-#   _IMAGE_NAME=cita-audio-serialize-whisper
-#   _DEPLOY_CANALES=promotor,mentor
+#
+# GPU (default):
+#   _USE_GPU=true  → Dockerfile.gpu + Cloud Run Job con nvidia-l4
+#   _PARALLELISM=3 (1 GPU por task; limita según cuota del proyecto)
+#
+# CPU:
+#   _USE_GPU=false _DOCKERFILE=Dockerfile _IMAGE_NAME=cita-audio-serialize-whisper
 #
 # Tablas (una vez):
 #   < cr_serialize_cita/bigquery/tables/hist_cita_audio_whisper.sql
@@ -11,15 +16,18 @@
 substitutions:
   _LOCATION: 'us-central1'
   _SOURCE_DIR: 'cr_serialize_cita/src'
-  _IMAGE_NAME: 'cita-audio-serialize-whisper'
-  _MEMORY: '32Gi'
+  _DOCKERFILE: 'Dockerfile.gpu'
+  _IMAGE_NAME: 'cita-audio-serialize-whisper-gpu'
+  _MEMORY: '16Gi'
   _CPU: '8'
   _TASK_TIMEOUT: '86400s'
   _MAX_RETRIES: '1'
-  _PARALLELISM: '10'
+  _PARALLELISM: '3'
   _WHISPER_MODEL: 'turbo'
   _DATASET: 'raw_cita_promotor'
   _DEPLOY_CANALES: 'promotor,mentor'
+  _USE_GPU: 'true'
+  _GPU_TYPE: 'nvidia-l4'
 
 timeout: 3600s
 
@@ -33,6 +41,8 @@ steps:
     dir: '${_SOURCE_DIR}'
     args:
       - 'build'
+      - '-f'
+      - '${_DOCKERFILE}'
       - '-t'
       - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID'
       - '-t'
@@ -66,6 +76,8 @@ steps:
       - '_WHISPER_MODEL=${_WHISPER_MODEL}'
       - '_DATASET=${_DATASET}'
       - '_DEPLOY_CANALES=${_DEPLOY_CANALES}'
+      - '_USE_GPU=${_USE_GPU}'
+      - '_GPU_TYPE=${_GPU_TYPE}'
 
 images:
   - 'gcr.io/${_PROJECT_ID}/${_IMAGE_NAME}:$BUILD_ID'

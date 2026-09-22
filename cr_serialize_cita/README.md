@@ -19,11 +19,14 @@ cr_serialize_cita/
   bigquery/tables/hist_cita_audio_whisper.sql
   scripts/cloudbuild_deploy.sh
   src/
-    Dockerfile
+    Dockerfile          # CPU
+    Dockerfile.gpu      # NVIDIA L4 (default en cloudbuild)
     main.py
     requirements.txt
     config/config.json
 ```
+
+Labels de costo: `project=cita`, `canal=promotor|mentor`, `accelerator=gpu|cpu`.
 
 ## 1) Tablas (una vez)
 
@@ -66,3 +69,34 @@ gcloud run jobs execute prd-utpbi-cita-mentor-audio-serialize-whisper \
 ```
 
 Los workflows `promotores_gcs_copy` / `mentores_gcs_copy` llaman estos Jobs tras el copy (`run_whisper`, default `true`).
+
+## GPU (default) vs CPU
+
+Por defecto el activador despliega **NVIDIA L4**:
+
+| | GPU | CPU |
+|---|---|---|
+| Dockerfile | `Dockerfile.gpu` | `Dockerfile` |
+| Imagen | `cita-audio-serialize-whisper-gpu` | `cita-audio-serialize-whisper` |
+| Device | `cuda` / `float16` | `cpu` / `int8` |
+| Flags Job | `--gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy` | sin GPU |
+| Parallelism | `3` (1 GPU/task; sube según cuota) | `10` |
+
+Activador (GPU, default del yaml):
+
+```text
+_PROJECT_ID=prd-utpbi-data-operation
+_SERVICE_ACCOUNT=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+```
+
+Volver a CPU:
+
+```text
+_USE_GPU=false
+_DOCKERFILE=Dockerfile
+_IMAGE_NAME=cita-audio-serialize-whisper
+_PARALLELISM=10
+_MEMORY=32Gi
+```
+
+Prerequisito GPU: cuota L4 en `us-central1` y API Cloud Run con GPUs habilitadas.

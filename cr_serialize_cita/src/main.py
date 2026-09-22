@@ -100,6 +100,13 @@ WHISPER_DOWNLOAD_ROOT = (
     os.environ.get("WHISPER_DOWNLOAD_ROOT", "").strip() or "/app/models"
 )
 WHISPER_FORCE_MONO_WAV = _env_bool("WHISPER_FORCE_MONO_WAV", False)
+WHISPER_DEVICE = (os.environ.get("WHISPER_DEVICE", "cpu").strip().lower() or "cpu")
+if WHISPER_DEVICE not in ("cpu", "cuda"):
+    raise ValueError(f"WHISPER_DEVICE inválido: {WHISPER_DEVICE!r} (cpu|cuda)")
+_DEFAULT_COMPUTE = "float16" if WHISPER_DEVICE == "cuda" else "int8"
+WHISPER_COMPUTE_TYPE = (
+    os.environ.get("WHISPER_COMPUTE_TYPE", "").strip() or _DEFAULT_COMPUTE
+)
 _DIRECT_AUDIO_SUFFIXES = {".flac", ".wav", ".mp3", ".m4a", ".ogg", ".opus", ".webm"}
 
 _PROMPTS = {
@@ -740,28 +747,30 @@ def main() -> None:
     mapped = MODEL_MAP.get(WHISPER_MODEL, WHISPER_MODEL)
     t0 = time.time()
     model_kwargs: dict[str, Any] = {
-        "device": "cpu",
-        "compute_type": "int8",
-        "cpu_threads": WHISPER_CPU_THREADS,
-        "num_workers": WHISPER_NUM_WORKERS,
+        "device": WHISPER_DEVICE,
+        "compute_type": WHISPER_COMPUTE_TYPE,
         "download_root": WHISPER_DOWNLOAD_ROOT,
         "local_files_only": _env_bool("HF_HUB_OFFLINE", True),
     }
+    if WHISPER_DEVICE == "cpu":
+        model_kwargs["cpu_threads"] = WHISPER_CPU_THREADS
+        model_kwargs["num_workers"] = WHISPER_NUM_WORKERS
     try:
         model = WhisperModel(mapped, **model_kwargs)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "Whisper local_files_only falló (%s); reintento con descarga permitida",
+            "Whisper load falló (%s); reintento local_files_only=False",
             exc,
         )
         model_kwargs["local_files_only"] = False
         model = WhisperModel(mapped, **model_kwargs)
     logger.info(
-        "Whisper '%s' root=%s offline=%s threads=%s beam=%s en %.1fs",
+        "Whisper '%s' device=%s compute=%s root=%s offline=%s beam=%s en %.1fs",
         mapped,
+        WHISPER_DEVICE,
+        WHISPER_COMPUTE_TYPE,
         WHISPER_DOWNLOAD_ROOT,
         model_kwargs["local_files_only"],
-        WHISPER_CPU_THREADS,
         WHISPER_BEAM_SIZE,
         time.time() - t0,
     )

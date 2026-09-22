@@ -67,7 +67,8 @@ deploy_one() {
   env+=",CITA_TABLE_CATALOG=${catalog}"
   env+=",CITA_TABLE_WHISPER_RAW=${raw}"
   env+=",CITA_TABLE_WHISPER_PRD=${prd}"
-  env+=",WHISPER_BEAM_SIZE=3,WHISPER_WORD_TIMESTAMPS=false,WHISPER_CONDITION_ON_PREVIOUS=false"
+  env+=",WHISPER_BEAM_SIZE=1,WHISPER_WORD_TIMESTAMPS=false,WHISPER_CONDITION_ON_PREVIOUS=false"
+  env+=",WHISPER_DOWNLOAD_ROOT=/app/models"
   env+=",HF_HUB_OFFLINE=1,TRANSFORMERS_OFFLINE=1"
 
   echo "=== Deploy Job ${job_name} (canal=${canal}) ==="

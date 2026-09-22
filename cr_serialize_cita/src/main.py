@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import tempfile
 import time
 from datetime import date, datetime, timezone
@@ -90,11 +91,16 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw in ("1", "true", "yes", "on")
 
 
-WHISPER_BEAM_SIZE = max(1, _env_int("WHISPER_BEAM_SIZE", 3))
+WHISPER_BEAM_SIZE = max(1, _env_int("WHISPER_BEAM_SIZE", 1))
 WHISPER_WORD_TIMESTAMPS = _env_bool("WHISPER_WORD_TIMESTAMPS", False)
 WHISPER_CONDITION_ON_PREVIOUS = _env_bool("WHISPER_CONDITION_ON_PREVIOUS", False)
 WHISPER_CPU_THREADS = max(1, _env_int("WHISPER_CPU_THREADS", 0) or (os.cpu_count() or 4))
 WHISPER_NUM_WORKERS = max(1, _env_int("WHISPER_NUM_WORKERS", 1))
+WHISPER_DOWNLOAD_ROOT = (
+    os.environ.get("WHISPER_DOWNLOAD_ROOT", "").strip() or "/app/models"
+)
+WHISPER_FORCE_MONO_WAV = _env_bool("WHISPER_FORCE_MONO_WAV", False)
+_DIRECT_AUDIO_SUFFIXES = {".flac", ".wav", ".mp3", ".m4a", ".ogg", ".opus", ".webm"}
 
 _PROMPTS = {
     "promotor": (
@@ -377,13 +383,89 @@ def fetch_for_uris(bq: bigquery.Client, uris: list[str]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Whisper
 # ---------------------------------------------------------------------------
-def load_audio_as_mono_wav(src_path: str, wav_path: str) -> tuple[int, int]:
+def _ffprobe_duration_channels(src_path: str) -> tuple[float | None, int | None]:
+    """Duración (s) y canales vía ffprobe sin decodificar todo el audio."""
+    try:
+        dur = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                src_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        ch = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=channels",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                src_path,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        duration_s = float((dur.stdout or "").strip() or "nan")
+        channels = int((ch.stdout or "").strip() or "0")
+        if duration_s != duration_s or channels < 1:
+            return None, None
+        return duration_s, channels
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
+def probe_audio(src_path: str) -> tuple[int, int]:
+    """Duración (ms) y canales. Prefiere ffprobe; fallback pydub."""
+    duration_s, channels = _ffprobe_duration_channels(src_path)
+    if duration_s is not None and channels is not None:
+        return int(duration_s * 1000), channels
+    audio = AudioSegment.from_file(src_path)
+    return len(audio), audio.channels
+
+
+def ensure_mono_wav(src_path: str, wav_path: str) -> tuple[int, int]:
+    """Convierte a WAV mono solo cuando hace falta (estéreo o force)."""
     audio = AudioSegment.from_file(src_path)
     channels = audio.channels
     if channels > 1:
+        logger.warning("  Audio con %s canales; se mezcla a mono.", channels)
         audio = audio.set_channels(1)
     audio.export(wav_path, format="wav")
     return len(audio), channels
+
+
+def resolve_transcribe_path(src_path: str, tmpdir: str) -> tuple[str, int, int]:
+    """
+    Preferir archivo original (Whisper+ffmpeg leen m4a/mp3/flac directo).
+    Solo exportar WAV mono si hay >1 canal o WHISPER_FORCE_MONO_WAV=1.
+    """
+    duration_ms, channels_original = probe_audio(src_path)
+    suffix = Path(src_path).suffix.lower()
+    need_wav = (
+        WHISPER_FORCE_MONO_WAV
+        or channels_original > 1
+        or suffix not in _DIRECT_AUDIO_SUFFIXES
+    )
+    if not need_wav:
+        return src_path, duration_ms, channels_original
+    wav_path = os.path.join(tmpdir, f"{Path(src_path).stem}_mono.wav")
+    duration_ms, channels_original = ensure_mono_wav(src_path, wav_path)
+    return wav_path, duration_ms, channels_original
 
 
 def transcribe_uri(
@@ -402,7 +484,6 @@ def transcribe_uri(
     local_audio = os.path.join(tmpdir, f"{Path(blob_name).stem}{suffix}")
     storage_client.bucket(bucket_name).blob(blob_name).download_to_filename(local_audio)
 
-    wav_path = os.path.join(tmpdir, f"{Path(blob_name).stem}_mono.wav")
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
     def row(
@@ -432,7 +513,7 @@ def transcribe_uri(
         }
 
     try:
-        duration_ms, channels = load_audio_as_mono_wav(local_audio, wav_path)
+        audio_path, duration_ms, channels = resolve_transcribe_path(local_audio, tmpdir)
     except Exception as exc:  # noqa: BLE001
         logger.error("Audio ilegible %s: %s", uri, exc, exc_info=True)
         return row(
@@ -454,7 +535,7 @@ def transcribe_uri(
 
     try:
         segments_iter, info = model.transcribe(
-            wav_path,
+            audio_path,
             language="es",
             task="transcribe",
             word_timestamps=WHISPER_WORD_TIMESTAMPS,
@@ -499,6 +580,7 @@ def transcribe_uri(
         "segments_kept": len(segments),
         "channels_original": channels,
         "beam_size": WHISPER_BEAM_SIZE,
+        "audio_direct": audio_path == local_audio,
     }
     return row(
         status="OK" if transcripcion else "EMPTY",
@@ -657,16 +739,28 @@ def main() -> None:
 
     mapped = MODEL_MAP.get(WHISPER_MODEL, WHISPER_MODEL)
     t0 = time.time()
-    model = WhisperModel(
-        mapped,
-        device="cpu",
-        compute_type="int8",
-        cpu_threads=WHISPER_CPU_THREADS,
-        num_workers=WHISPER_NUM_WORKERS,
-    )
+    model_kwargs: dict[str, Any] = {
+        "device": "cpu",
+        "compute_type": "int8",
+        "cpu_threads": WHISPER_CPU_THREADS,
+        "num_workers": WHISPER_NUM_WORKERS,
+        "download_root": WHISPER_DOWNLOAD_ROOT,
+        "local_files_only": _env_bool("HF_HUB_OFFLINE", True),
+    }
+    try:
+        model = WhisperModel(mapped, **model_kwargs)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Whisper local_files_only falló (%s); reintento con descarga permitida",
+            exc,
+        )
+        model_kwargs["local_files_only"] = False
+        model = WhisperModel(mapped, **model_kwargs)
     logger.info(
-        "Whisper '%s' threads=%s beam=%s en %.1fs",
+        "Whisper '%s' root=%s offline=%s threads=%s beam=%s en %.1fs",
         mapped,
+        WHISPER_DOWNLOAD_ROOT,
+        model_kwargs["local_files_only"],
         WHISPER_CPU_THREADS,
         WHISPER_BEAM_SIZE,
         time.time() - t0,

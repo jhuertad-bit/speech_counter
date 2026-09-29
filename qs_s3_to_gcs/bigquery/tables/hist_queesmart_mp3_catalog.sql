@@ -2,10 +2,10 @@
 -- Proyecto: prd-utpbi-data-operation | Dataset: raw_queue_smart (US)
 --
 -- Migración si la tabla ya existe:
---   ALTER TABLE `prd-utpbi-data-operation.raw_queue_smart.hist_queesmart_mp3_catalog`
---     ADD COLUMN IF NOT EXISTS source_file_name STRING,
---     ADD COLUMN IF NOT EXISTS convert_method STRING,
---     ADD COLUMN IF NOT EXISTS duration_seconds FLOAT64;
+--   ALTER TABLE `….hist_queesmart_mp3_catalog`
+--     ADD COLUMN IF NOT EXISTS gcs_original_uri STRING,
+--     ADD COLUMN IF NOT EXISTS gcs_original_path STRING;
+--   (ver bigquery/sqls/alter_gcs_original_path.sql)
 
 CREATE TABLE IF NOT EXISTS `prd-utpbi-data-operation.raw_queue_smart.hist_queesmart_mp3_catalog` (
   fecha_audio DATE NOT NULL,
@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS `prd-utpbi-data-operation.raw_queue_smart.hist_queesm
   source_file_name STRING,
   gcs_uri STRING NOT NULL,
   gcs_path STRING,
+  gcs_original_uri STRING,
+  gcs_original_path STRING,
   campus_code STRING,
   type_code STRING,
   correlative STRING,
@@ -28,5 +30,5 @@ CREATE TABLE IF NOT EXISTS `prd-utpbi-data-operation.raw_queue_smart.hist_queesm
 )
 PARTITION BY fecha_audio
 OPTIONS (
-  description = 'Catálogo QueeSmart: audio S3 convertido a MP3 (loudnorm) en GCS; source_file_name = join con tickets_hist_raw.audio; duration_seconds vía ffprobe del MP3'
+  description = 'Catálogo QueeSmart: FLAC STT en gcs_*; original S3 en gcs_original_*; source_file_name = basename join tickets'
 );

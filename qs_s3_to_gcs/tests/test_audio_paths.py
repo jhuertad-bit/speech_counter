@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import unittest
 
+from datetime import date
+
 from audio_paths import (
     LEGACY_FILENAME_REGEX,
+    gcs_key_for_audio,
+    gcs_key_for_original,
     parse_audio_filename,
     split_campus_type_code,
 )
@@ -91,6 +95,19 @@ class ParseAudioFilenameTests(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed["campus"], "115")
         self.assertEqual(parsed["type_code"], "RA1")
+
+
+class GcsKeyTests(unittest.TestCase):
+    def test_flac_and_original_paths(self) -> None:
+        d = date(2026, 9, 7)
+        prefix = "queuesmart_mp3_s3/"
+        flac = gcs_key_for_audio("105AG4-20260907-155702.flac", d, prefix)
+        orig = gcs_key_for_original("105AG4-20260907-155702.webm", d, prefix)
+        self.assertEqual(flac, "queuesmart_mp3_s3/2026-09-07/105AG4-20260907-155702.flac")
+        self.assertEqual(
+            orig,
+            "queuesmart_mp3_s3/2026-09-07/original/105AG4-20260907-155702.webm",
+        )
 
 
 if __name__ == "__main__":

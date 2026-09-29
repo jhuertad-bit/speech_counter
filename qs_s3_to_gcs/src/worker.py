@@ -1,4 +1,4 @@
-"""Procesa un ítem del manifiesto: S3 → FLAC+loudnorm (default) → GCS → BigQuery."""
+"""Procesa un ítem del manifiesto: S3 → original+FLAC → GCS → BigQuery."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 
 from google.cloud import storage
 
-from audio_paths import gcs_key_for_audio, parse_audio_filename
+from audio_paths import gcs_key_for_audio, gcs_key_for_original, parse_audio_filename
 from bq_catalog import build_catalog_row, catalog_files
 from converter import (
     DEFAULT_NOISE_FILTER,
@@ -97,7 +97,11 @@ def _delete_non_flac_originals(
     date_folder_format: str,
     keep_key: str,
 ) -> list[str]:
-    """Tras un FLAC OK, borra webm/mp3/… del mismo stem para no duplicar espacio."""
+    """
+    Tras un FLAC OK, borra webm/mp3/… legacy en la carpeta de fecha (raíz).
+
+    No toca `{date}/original/` — ahí vive la copia intacta del origen S3.
+    """
     deleted: list[str] = []
     for ext in KNOWN_STORAGE_EXTS:
         if ext == ".flac":
@@ -116,6 +120,62 @@ def _delete_non_flac_originals(
         except Exception as exc:  # noqa: BLE001
             print(f"[worker] WARN no se pudo borrar gs://{bucket}/{key}: {exc}")
     return deleted
+
+
+def _guess_source_content_type(source_name: str) -> str:
+    ext = os.path.splitext(source_name)[1].lower()
+    mapping = {
+        ".webm": "audio/webm",
+        ".ogg": "audio/ogg",
+        ".opus": "audio/ogg",
+        ".flac": "audio/flac",
+        ".wav": "audio/wav",
+        ".wave": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".m4a": "audio/mp4",
+        ".aac": "audio/aac",
+        ".mp4": "audio/mp4",
+        ".3gp": "audio/3gpp",
+        ".amr": "audio/amr",
+    }
+    return mapping.get(ext, "application/octet-stream")
+
+
+def _upload_original_to_gcs(
+    *,
+    gcs_client: storage.Client,
+    local_src: str,
+    source_name: str,
+    file_date,
+    gcs_bucket: str,
+    gcs_prefix: str,
+    date_folder_format: str,
+    original_subdir: str,
+    chunk: int,
+    skip_if_exists: bool = True,
+) -> str | None:
+    """Sube la copia intacta del origen a `{prefix}/{date}/original/{name}`."""
+    gcs_key = gcs_key_for_original(
+        source_name,
+        file_date,
+        gcs_prefix,
+        date_folder_format=date_folder_format,
+        original_subdir=original_subdir,
+    )
+    if skip_if_exists and gcs_blob_exists(gcs_client, gcs_bucket, gcs_key):
+        print(f"[worker] original already gs://{gcs_bucket}/{gcs_key}")
+        return gcs_key
+
+    size = stream_file_to_gcs(
+        gcs_client,
+        local_path=local_src,
+        bucket=gcs_bucket,
+        blob_name=gcs_key,
+        content_type=_guess_source_content_type(source_name),
+        chunk_size=chunk,
+    )
+    print(f"[worker] original OK gs://{gcs_bucket}/{gcs_key} bytes={size}")
+    return gcs_key
 
 
 def _is_segment_file(file_name: str) -> bool:
@@ -187,11 +247,27 @@ def _upload_stt_segments(
     chunk: int,
     item: dict[str, Any],
     existing_key: str | None,
+    keep_original: bool,
+    original_subdir: str,
 ) -> dict[str, Any]:
     """Parte audio > MAX_STT_SEGMENT_SECONDS en FLACs _s01, _s02… para ML.TRANSCRIBE."""
     total = float(probe.duration_seconds or 0)
     if total <= MAX_STT_SEGMENT_SECONDS:
         raise ValueError("_upload_stt_segments llamado con audio corto")
+
+    original_gcs_key: str | None = None
+    if keep_original:
+        original_gcs_key = _upload_original_to_gcs(
+            gcs_client=gcs_client,
+            local_src=local_src,
+            source_name=source_name,
+            file_date=parsed["file_date"],
+            gcs_bucket=gcs_bucket,
+            gcs_prefix=gcs_prefix,
+            date_folder_format=date_folder_format,
+            original_subdir=original_subdir,
+            chunk=chunk,
+        )
 
     segment_count = max(1, math.ceil(total / MAX_STT_SEGMENT_SECONDS))
     print(
@@ -255,6 +331,7 @@ def _upload_stt_segments(
             duration_seconds=float(meta.get("duration_seconds") or seg_duration),
             actual_format=str(meta.get("actual_format") or "flac"),
             encoding="flac",
+            gcs_original_key=original_gcs_key,
         )
         total_inserted += inserted
         uploaded.append({"gcs_key": gcs_key, "segment_index": idx, "bytes": size})
@@ -290,6 +367,7 @@ def _upload_stt_segments(
         "action": "stt_split",
         "segment_count": segment_count,
         "gcs_key": uploaded[0]["gcs_key"],
+        "gcs_original_key": original_gcs_key,
         "segments": uploaded,
         "bq_inserted": total_inserted,
         "convert_method": f"ffmpeg_flac_split_{segment_count}",
@@ -310,6 +388,7 @@ def _write_catalog(
     duration_seconds: float | None = None,
     actual_format: str | None = None,
     encoding: str | None = None,
+    gcs_original_key: str | None = None,
 ) -> int:
     gcp_cfg = config["gcp"]
     bq_cfg = config.get("bigquery", {})
@@ -330,6 +409,7 @@ def _write_catalog(
         duration_seconds=duration_seconds,
         actual_format=actual_format,
         encoding=encoding,
+        gcs_original_key=gcs_original_key,
     )
     return catalog_files(
         project_id=gcp_cfg["project_id"],
@@ -367,6 +447,8 @@ def process_one_candidate(
     filename_pattern = sync_cfg.get("filename_regex")
     # Default True: siempre loudnorm→FLAC (mejora STT counter / frases bajas).
     force_transcode_flac = bool(audio_cfg.get("force_transcode_flac", True))
+    keep_original = bool(audio_cfg.get("keep_original_in_gcs", True))
+    original_subdir = str(audio_cfg.get("original_subdir") or "original")
 
     s3_key = item["key"]
     source_name = item.get("file_name") or os.path.basename(s3_key)
@@ -382,6 +464,42 @@ def process_one_candidate(
         "status": "error",
     }
     existing_key: str | None = None
+    original_gcs_key_expected = gcs_key_for_original(
+        source_name,
+        parsed["file_date"],
+        gcs_prefix,
+        date_folder_format=date_folder_format,
+        original_subdir=original_subdir,
+    )
+
+    def _needs_original_backfill() -> bool:
+        return keep_original and not gcs_blob_exists(
+            gcs_client, gcs_bucket, original_gcs_key_expected
+        )
+
+    def _backfill_original_from_s3(*, chunk_size: int) -> str | None:
+        with tempfile.TemporaryDirectory(prefix="qs_orig_") as tmpdir:
+            _, src_ext = os.path.splitext(source_name)
+            local_src = os.path.join(tmpdir, f"source{src_ext or '.bin'}")
+            print(f"[worker] download s3://{s3_bucket}/{s3_key} → original only")
+            stream_s3_to_file(
+                s3_client,
+                bucket=s3_bucket,
+                key=s3_key,
+                dest_path=local_src,
+                chunk_size=chunk_size,
+            )
+            return _upload_original_to_gcs(
+                gcs_client=gcs_client,
+                local_src=local_src,
+                source_name=source_name,
+                file_date=parsed["file_date"],
+                gcs_bucket=gcs_bucket,
+                gcs_prefix=gcs_prefix,
+                date_folder_format=date_folder_format,
+                original_subdir=original_subdir,
+                chunk=chunk_size,
+            )
 
     if skip_if_exists:
         existing_key = find_existing_gcs_object(
@@ -411,6 +529,13 @@ def process_one_candidate(
                 result["gcs_key"] = seg_key
                 result["status"] = "already_in_gcs"
                 result["action"] = "skip_segments_exist"
+                if _needs_original_backfill():
+                    chunk_bf = int(audio_cfg.get("io_chunk_size_bytes", 8 * 1024 * 1024))
+                    result["gcs_original_key"] = _backfill_original_from_s3(chunk_size=chunk_bf)
+                else:
+                    result["gcs_original_key"] = (
+                        original_gcs_key_expected if keep_original else None
+                    )
                 return result
             if force_transcode_flac and not _is_flac_key(existing_key):
                 print(
@@ -441,6 +566,15 @@ def process_one_candidate(
                     result["gcs_key"] = existing_key
                     result["status"] = "already_in_gcs"
                     result["action"] = "skip_exists"
+                    if _needs_original_backfill():
+                        chunk_bf = int(audio_cfg.get("io_chunk_size_bytes", 8 * 1024 * 1024))
+                        result["gcs_original_key"] = _backfill_original_from_s3(
+                            chunk_size=chunk_bf
+                        )
+                    else:
+                        result["gcs_original_key"] = (
+                            original_gcs_key_expected if keep_original else None
+                        )
                     if bool(bq_cfg.get("catalog_existing_in_gcs", True)):
                         result["bq_inserted"] = _write_catalog(
                             config=config,
@@ -452,6 +586,7 @@ def process_one_candidate(
                             sync_mode=sync_mode,
                             processed_at=processed_at,
                             convert_method="already_in_gcs",
+                            gcs_original_key=result.get("gcs_original_key"),
                         )
                     return result
                 else:
@@ -487,6 +622,21 @@ def process_one_candidate(
             dest_path=local_src,
             chunk_size=chunk,
         )
+
+        original_gcs_key: str | None = None
+        if keep_original:
+            original_gcs_key = _upload_original_to_gcs(
+                gcs_client=gcs_client,
+                local_src=local_src,
+                source_name=source_name,
+                file_date=parsed["file_date"],
+                gcs_bucket=gcs_bucket,
+                gcs_prefix=gcs_prefix,
+                date_folder_format=date_folder_format,
+                original_subdir=original_subdir,
+                chunk=chunk,
+            )
+            result["gcs_original_key"] = original_gcs_key
 
         try:
             probe = probe_media(local_src, timeout=min(60, timeout))
@@ -534,6 +684,7 @@ def process_one_candidate(
                 sync_mode=sync_mode,
                 processed_at=processed_at,
                 convert_method="already_in_gcs",
+                gcs_original_key=result.get("gcs_original_key"),
             )
             return result
 
@@ -563,6 +714,8 @@ def process_one_candidate(
                 chunk=chunk,
                 item=item,
                 existing_key=existing_key,
+                keep_original=keep_original,
+                original_subdir=original_subdir,
             )
 
         used_fallback = False
@@ -610,6 +763,7 @@ def process_one_candidate(
                         sync_mode=sync_mode,
                         processed_at=processed_at,
                         convert_method="transcode_fallback_existing",
+                        gcs_original_key=result.get("gcs_original_key"),
                     )
                     return result
                 fallback_ext = src_ext or ".bin"
@@ -665,6 +819,7 @@ def process_one_candidate(
         duration_seconds=float(duration_seconds) if duration_seconds is not None else None,
         actual_format=actual_format,
         encoding=encoding,
+        gcs_original_key=result.get("gcs_original_key"),
     )
 
     result["status"] = "transcode_fallback" if used_fallback else "ok"

@@ -224,5 +224,25 @@ def gcs_key_for_audio(
     return f"{gcs_prefix.rstrip('/')}/{folder}/{file_name}"
 
 
+def gcs_key_for_original(
+    source_file_name: str,
+    file_date: date,
+    gcs_prefix: str,
+    *,
+    date_folder_format: str = "%Y-%m-%d",
+    original_subdir: str = "original",
+) -> str:
+    """
+    Copia del archivo S3 sin transcodificar.
+
+    gs://.../{prefix}/{YYYY-MM-DD}/original/{source_file_name}
+    Separado del FLAC STT para no colisionar ni borrarse en limpiezas legacy.
+    """
+    folder = file_date.strftime(date_folder_format)
+    name = os.path.basename(source_file_name.strip())
+    sub = (original_subdir or "original").strip("/").strip() or "original"
+    return f"{gcs_prefix.rstrip('/')}/{folder}/{sub}/{name}"
+
+
 def basename_from_s3_key(s3_key: str) -> str:
     return os.path.basename(s3_key)

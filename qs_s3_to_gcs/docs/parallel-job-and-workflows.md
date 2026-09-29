@@ -19,7 +19,15 @@ Transcodificación:
 5. Si en GCS ya hay legacy `.mp3`/`.webm` y se fuerza FLAC → **upgrade** (no skip).
 
 Nombres de tablas/prefijos `*mp3*` (etiquetas) **no se renombran**.  
-El **objeto en GCS** usa extensión real (`.flac` en el flujo default). Formato también en `actual_format` / `encoding`.
+El **objeto STT en GCS** usa extensión real (`.flac` en el flujo default).  
+Con `audio.keep_original_in_gcs=true` (default) también se guarda la copia intacta:
+
+```
+gs://{bucket}/{destination_prefix}/{YYYY-MM-DD}/{stem}.flac
+gs://{bucket}/{destination_prefix}/{YYYY-MM-DD}/original/{source_file_name}
+```
+
+Formato también en `actual_format` / `encoding`.
 
 ## Parte 2 — Workflow
 

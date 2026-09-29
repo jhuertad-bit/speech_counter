@@ -71,6 +71,7 @@ def build_catalog_row(
     duration_seconds: float | None = None,
     actual_format: str | None = None,
     encoding: str | None = None,
+    gcs_original_key: str | None = None,
 ) -> dict[str, Any]:
     ts = processed_at or datetime.now(timezone.utc)
     file_date = parsed["file_date"]
@@ -78,7 +79,7 @@ def build_catalog_row(
         fecha_audio = file_date.isoformat()
     else:
         fecha_audio = str(file_date)
-    return {
+    row: dict[str, Any] = {
         "fecha_audio": fecha_audio,
         "fecha_procesamiento": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "file_name": parsed["file_name"],
@@ -93,13 +94,17 @@ def build_catalog_row(
         "file_size_bytes": file_size_bytes,
         "duration_seconds": duration_seconds,
         "sync_mode": sync_mode,
-    "convert_method": convert_method,
-    "actual_format": actual_format,
-    "encoding": encoding,
-    "segment_index": parsed.get("segment_index"),
-    "segment_count": parsed.get("segment_count"),
-    "segment_offset_seconds": parsed.get("segment_offset_seconds"),
+        "convert_method": convert_method,
+        "actual_format": actual_format,
+        "encoding": encoding,
+        "segment_index": parsed.get("segment_index"),
+        "segment_count": parsed.get("segment_count"),
+        "segment_offset_seconds": parsed.get("segment_offset_seconds"),
     }
+    if gcs_original_key:
+        row["gcs_original_path"] = gcs_original_key
+        row["gcs_original_uri"] = f"gs://{gcs_bucket}/{gcs_original_key}"
+    return row
 
 
 def existing_gcs_uris(

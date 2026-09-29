@@ -1,0 +1,69 @@
+# Cloud Run Job one-shot: backfill originales S3 → GCS + UPDATE catálogo BQ.
+#
+# Variables de sustitución (activador Cloud Build):
+#   Obligatorias: _PROJECT_ID, _JOB_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME, _DATASET_ID,
+#                 _AWS_ACCESS_KEY_ID, _AWS_SECRET_ACCESS_KEY
+#   Opcionales:   _LOCATION, _AWS_S3_BUCKET, _AWS_S3_PREFIX, _AWS_ENDPOINT_URL,
+#                 _GCP_DESTINATION_PREFIX, _SOURCE_DIR, _MEMORY, _CPU,
+#                 _TASK_TIMEOUT, _MAX_RETRIES, _PARALLELISM, _CONFIG_PATH,
+#                 _BQ_TABLE_ID
+#
+# Ejemplo PRD:
+#   _PROJECT_ID=prd-utpbi-data-operation
+#   _JOB_NAME=prd-utpbi-s3-originals-backfill
+#   _SERVICE_ACCOUNT=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+#   _BUCKET_NAME=prd-utp-stg-queuesmart
+#   _DATASET_ID=raw_queue_smart
+#   _AWS_S3_BUCKET=utp-a106-s3-prd-02-ticketero-counter
+#   _GCP_DESTINATION_PREFIX=queuesmart_mp3_s3/
+#   _SOURCE_DIR=qs_s3_originals_backfill/src
+#   _PARALLELISM=20
+#   _TASK_TIMEOUT=3600s
+#
+# Tras el deploy (una vez por rango):
+#   1) ALTER columnas gcs_original_* (qs_s3_to_gcs/bigquery/sqls/alter_gcs_original_path.sql)
+#   2) prepare con BACKFILL_START_DATE / BACKFILL_END_DATE
+#   3) worker con --tasks=N (count del meta)
+substitutions:
+  _LOCATION: 'us-central1'
+  _SOURCE_DIR: 'qs_s3_originals_backfill/src'
+  _MEMORY: '1Gi'
+  _CPU: '1'
+  _TASK_TIMEOUT: '3600s'
+  _MAX_RETRIES: '1'
+  _PARALLELISM: '20'
+  _CONFIG_PATH: '/app/config/config.json'
+  _AWS_S3_PREFIX: ''
+  _AWS_ENDPOINT_URL: 'https://s3.us-east-1.amazonaws.com'
+  _GCP_DESTINATION_PREFIX: 'queuesmart_mp3_s3/'
+  _BQ_TABLE_ID: 'hist_queesmart_mp3_catalog'
+
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - 'qs_s3_originals_backfill/scripts/cloudbuild_deploy.sh'
+    env:
+      - '_PROJECT_ID=${_PROJECT_ID}'
+      - '_JOB_NAME=${_JOB_NAME}'
+      - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '_BUCKET_NAME=${_BUCKET_NAME}'
+      - '_DATASET_ID=${_DATASET_ID}'
+      - '_BQ_TABLE_ID=${_BQ_TABLE_ID}'
+      - '_AWS_S3_BUCKET=${_AWS_S3_BUCKET}'
+      - '_AWS_S3_PREFIX=${_AWS_S3_PREFIX}'
+      - '_AWS_ENDPOINT_URL=${_AWS_ENDPOINT_URL}'
+      - '_AWS_ACCESS_KEY_ID=${_AWS_ACCESS_KEY_ID}'
+      - '_AWS_SECRET_ACCESS_KEY=${_AWS_SECRET_ACCESS_KEY}'
+      - '_GCP_DESTINATION_PREFIX=${_GCP_DESTINATION_PREFIX}'
+      - '_LOCATION=${_LOCATION}'
+      - '_SOURCE_DIR=${_SOURCE_DIR}'
+      - '_MEMORY=${_MEMORY}'
+      - '_CPU=${_CPU}'
+      - '_TASK_TIMEOUT=${_TASK_TIMEOUT}'
+      - '_MAX_RETRIES=${_MAX_RETRIES}'
+      - '_PARALLELISM=${_PARALLELISM}'
+      - '_CONFIG_PATH=${_CONFIG_PATH}'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

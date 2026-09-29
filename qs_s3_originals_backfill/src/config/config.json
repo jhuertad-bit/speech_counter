@@ -1,0 +1,51 @@
+{
+  "aws": {
+    "region": "us-east-1",
+    "bucket": "utp-a106-s3-prd-02-ticketero-counter",
+    "prefix": "",
+    "endpoint_url": "https://s3.us-east-1.amazonaws.com"
+  },
+  "gcp": {
+    "project_id": "prd-utpbi-data-operation",
+    "bucket_name": "prd-utp-stg-queuesmart",
+    "destination_prefix": "queuesmart_mp3_s3/",
+    "state_object": "state/s3_originals_backfill_last.json",
+    "region": "us-central1",
+    "dataset_id": "raw_queue_smart",
+    "cloud_run_job_name": "prd-utpbi-s3-originals-backfill",
+    "service_account_email": "genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com"
+  },
+  "job": {
+    "role": "worker",
+    "manifest_prefix": "state/manifests_originals_backfill",
+    "max_parallelism": 20
+  },
+  "sync": {
+    "timezone": "America/Lima",
+    "gcs_date_folder_format": "%Y-%m-%d",
+    "original_subdir": "original",
+    "start_date": "",
+    "end_date": "",
+    "skip_if_exists_in_gcs": true,
+    "note": "Rango one-shot: BACKFILL_START_DATE / BACKFILL_END_DATE (o sync.start_date/end_date)."
+  },
+  "batch": {
+    "max_files": 0,
+    "min_object_size_bytes": 1,
+    "io_chunk_size_bytes": 8388608
+  },
+  "bigquery": {
+    "dataset_id": "raw_queue_smart",
+    "table_id": "hist_queesmart_mp3_catalog",
+    "location": "US"
+  },
+  "secrets": {
+    "source": "env",
+    "secret_resource": "projects/596502577187/secrets/QueeSmartSecrets",
+    "version": "latest",
+    "aws_access_key_id_field": "aws_access_key_id",
+    "aws_secret_access_key_field": "aws_secret_access_key",
+    "aws_access_key_id_env": "AWS_ACCESS_KEY_ID",
+    "aws_secret_access_key_env": "AWS_SECRET_ACCESS_KEY"
+  }
+}

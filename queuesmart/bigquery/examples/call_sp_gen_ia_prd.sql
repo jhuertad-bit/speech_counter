@@ -4,7 +4,7 @@ DECLARE v_fecha DATE DEFAULT DATE_SUB(CURRENT_DATE('America/Lima'), INTERVAL 1 D
 
 -- Candidatos del día
 SELECT COUNT(*) AS audios_catalogo
-FROM `prd-utpbi-data-operation.raw_queuesmart.v_hist_queesmart_mp3_catalog_ia_input`
+FROM `prd-utpbi-data-operation.raw_queue_smart.v_hist_queesmart_mp3_catalog_ia_input`
 WHERE process_date = v_fecha;
 
 -- Gen IA

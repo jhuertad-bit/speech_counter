@@ -1,28 +1,36 @@
--- Vista de inspección: audios con GCS + contexto CRM (sin Gen IA).
+-- Vista de inspección: audios con GCS + contexto ticket (sin Gen IA).
 -- Equivalente a v_onemarketer_whatsapp_mp3_ia_input para QueeSmart.
+-- Desplegar con --location=us-central1
 
-CREATE OR REPLACE VIEW `${PROJECT_ID}.${DATASET_RAW}.v_queuesmart_mp3_ia_input` AS
+CREATE OR REPLACE VIEW `prd-utpbi-data-operation.raw_queue_smart.v_queuesmart_mp3_ia_input` AS
 SELECT
   e.process_day,
   e.gcs_uri,
   e.file_name,
+  e.source_file_name,
   e.audio,
-  e.record_id,
+  e.recordid,
+  e.rowid,
+  e.codagencia,
   e.campus_code,
   e.type_code,
+  e.correlative,
   e.match_status,
-  e.cliente_tipo,
-  e.cliente_estado,
-  e.cliente_url,
-  e.asesor_nombre,
-  e.asesor_usuario,
-  e.asesor_codigo,
-  e.num_celular,
-  e.enviado_sms,
-  e.transferido,
-  e.apellido_paterno,
-  e.audio_fecha,
-  e.file_size_bytes
-FROM `${PROJECT_ID}.${DATASET_RAW}.queuesmart_mp3_enriched` AS e
+  e.asesornombre,
+  e.asesorusuario,
+  e.asesorcodigo,
+  e.ndoc,
+  e.nombresusuario,
+  e.numcelular,
+  e.clientetipo,
+  e.clienteestado,
+  e.creationtimestamp,
+  e.starttimestamp,
+  e.endtimestamp,
+  e.`database`,
+  e.file_size_bytes,
+  e.duration_seconds,
+  e.convert_method
+FROM `prd-utpbi-data-operation.raw_queue_smart.queuesmart_mp3_enriched` AS e
 WHERE e.match_status IN ('BOTH', 'GCS_ONLY')
   AND e.gcs_uri IS NOT NULL;

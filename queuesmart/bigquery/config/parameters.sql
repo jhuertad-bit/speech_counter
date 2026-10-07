@@ -3,7 +3,7 @@
 -- =============================================================================
 --
 -- PROJECT_ID        = prd-utpbi-data-operation
--- DATASET_RAW       = raw_queuesmart          (us-central1)
+-- DATASET_RAW       = raw_queue_smart          (us-central1)
 -- DATASET_ANALYTICS = adf_speech_analytics    (US — Gen IA)
 -- BQ_CONNECTION     = `prd-utpbi-data-operation.US.utp_gen_ia_process`
 -- GEMINI_MODEL      = `prd-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`
@@ -22,3 +22,9 @@
 -- Ejemplo CALL: examples/call_sp_gen_ia_prd.sql
 --
 -- (Opcional) CRM Ticketero: sp_queuesmart_mp3_consolidate + qs_sql_to_bq
+-- CRM Dynamics (mismas uniones que Genesys / OneMarketer), tablas de prod:
+--   v_queuesmart_counter_crm_lead
+--   v_queuesmart_lead_conversaciones
+--   leads + systemusers + opportunities en prd-utpbi-data-storage-pv.raw_dynamic_crm
+--   Match: ndoc ↔ onetoone_nro (DNI), o numcelular ↔ mobilephone (9 dígitos).
+--   Dataset prod: raw_queue_smart (us-central1)

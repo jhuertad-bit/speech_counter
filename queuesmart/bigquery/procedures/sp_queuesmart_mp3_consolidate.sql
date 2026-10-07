@@ -2,7 +2,7 @@
 -- SP: Consolidación QueeSmart MP3 (patrón Genesys "vaso de agua") — PRODUCCIÓN
 --
 -- Proyecto: prd-utpbi-data-operation
--- Dataset:  raw_queuesmart (us-central1)
+-- Dataset:  raw_queue_smart (us-central1)
 --
 -- Ventana: [p_fecha_proceso - 3 días, p_fecha_proceso]
 --  1.1 Catálogo MP3 (hist → queuesmart_mp3_catalog), dedup por gcs_uri
@@ -10,12 +10,12 @@
 --  1.3 Enriquecido GCS + CRM (→ queuesmart_mp3_enriched), join por audio = file_name
 --
 -- Ejecutar (diario, después de qs_s3_to_gcs + qs_sql_to_bq):
---   CALL `prd-utpbi-data-operation.raw_queuesmart.sp_queuesmart_mp3_consolidate`(
+--   CALL `prd-utpbi-data-operation.raw_queue_smart.sp_queuesmart_mp3_consolidate`(
 --     DATE_SUB(CURRENT_DATE('America/Lima'), INTERVAL 1 DAY)
 --   );
 -- =============================================================================
 
-CREATE OR REPLACE PROCEDURE `prd-utpbi-data-operation.raw_queuesmart.sp_queuesmart_mp3_consolidate`(
+CREATE OR REPLACE PROCEDURE `prd-utpbi-data-operation.raw_queue_smart.sp_queuesmart_mp3_consolidate`(
   p_fecha_proceso DATE
 )
 BEGIN
@@ -47,7 +47,7 @@ BEGIN
         PARTITION BY gcs_uri
         ORDER BY fecha_procesamiento DESC
       ) AS rn
-    FROM `prd-utpbi-data-operation.raw_queuesmart.hist_queesmart_mp3_catalog`
+    FROM `prd-utpbi-data-operation.raw_queue_smart.hist_queesmart_mp3_catalog`
     WHERE fecha_audio BETWEEN start_date AND p_fecha_proceso
   )
   SELECT
@@ -67,10 +67,10 @@ BEGIN
   FROM base_ranked
   WHERE rn = 1;
 
-  DELETE FROM `prd-utpbi-data-operation.raw_queuesmart.queuesmart_mp3_catalog`
+  DELETE FROM `prd-utpbi-data-operation.raw_queue_smart.queuesmart_mp3_catalog`
   WHERE gcs_uri IN (SELECT DISTINCT gcs_uri FROM temp_mp3_catalog);
 
-  INSERT INTO `prd-utpbi-data-operation.raw_queuesmart.queuesmart_mp3_catalog` (
+  INSERT INTO `prd-utpbi-data-operation.raw_queue_smart.queuesmart_mp3_catalog` (
     process_day,
     fecha_procesamiento,
     file_name,
@@ -128,7 +128,7 @@ BEGIN
         PARTITION BY record_id
         ORDER BY fecha_procesamiento DESC
       ) AS rn
-    FROM `prd-utpbi-data-operation.raw_queuesmart.hist_queuesmart_ticketero_raw`
+    FROM `prd-utpbi-data-operation.raw_queue_smart.hist_queuesmart_ticketero_raw`
     WHERE COALESCE(audio_fecha, fecha_extraccion) BETWEEN start_date AND p_fecha_proceso
       AND record_id IS NOT NULL
   )
@@ -153,10 +153,10 @@ BEGIN
   FROM base_ranked
   WHERE rn = 1;
 
-  DELETE FROM `prd-utpbi-data-operation.raw_queuesmart.queuesmart_ticketero_crm`
+  DELETE FROM `prd-utpbi-data-operation.raw_queue_smart.queuesmart_ticketero_crm`
   WHERE record_id IN (SELECT DISTINCT record_id FROM temp_ticketero_crm);
 
-  INSERT INTO `prd-utpbi-data-operation.raw_queuesmart.queuesmart_ticketero_crm` (
+  INSERT INTO `prd-utpbi-data-operation.raw_queue_smart.queuesmart_ticketero_crm` (
     process_day,
     fecha_extraccion,
     fecha_procesamiento,
@@ -203,12 +203,12 @@ BEGIN
   CREATE OR REPLACE TEMP TABLE temp_mp3_enriched AS
   WITH catalog AS (
     SELECT *
-    FROM `prd-utpbi-data-operation.raw_queuesmart.queuesmart_mp3_catalog`
+    FROM `prd-utpbi-data-operation.raw_queue_smart.queuesmart_mp3_catalog`
     WHERE process_day BETWEEN start_date AND p_fecha_proceso
   ),
   crm AS (
     SELECT *
-    FROM `prd-utpbi-data-operation.raw_queuesmart.queuesmart_ticketero_crm`
+    FROM `prd-utpbi-data-operation.raw_queue_smart.queuesmart_ticketero_crm`
     WHERE process_day BETWEEN start_date AND p_fecha_proceso
   ),
   joined AS (
@@ -258,10 +258,10 @@ BEGIN
   FROM ranked
   WHERE rn = 1;
 
-  DELETE FROM `prd-utpbi-data-operation.raw_queuesmart.queuesmart_mp3_enriched`
+  DELETE FROM `prd-utpbi-data-operation.raw_queue_smart.queuesmart_mp3_enriched`
   WHERE process_day BETWEEN start_date AND p_fecha_proceso;
 
-  INSERT INTO `prd-utpbi-data-operation.raw_queuesmart.queuesmart_mp3_enriched` (
+  INSERT INTO `prd-utpbi-data-operation.raw_queue_smart.queuesmart_mp3_enriched` (
     process_day,
     match_status,
     gcs_uri,

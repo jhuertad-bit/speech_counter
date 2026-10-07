@@ -26,13 +26,16 @@
 --   CRM_PROJECT         = prd-utpbi-data-storage-pv
 --   CRM_DATASET         = raw_dynamic_crm
 --
--- Cruce OneMarketer ↔ CRM:
+-- Cruce OneMarketer ↔ CRM (mismas uniones que Genesys a partir del lead):
 --   Vista principal (granularidad LEAD): v_onemarketer_lead_conversaciones
 --   Detalle por caso:                  v_onemarketer_caso_crm_lead
 --   lcra_lead = etiqueta de flujo ("Lead Completo"), NO es leads.leadid (GUID).
---   Join: lcra_dni ↔ onetoone_nro | teléfono ↔ mobilephone (9 dígitos PE).
+--   Join lead: lcra_dni ↔ onetoone_nro | teléfono ↔ mobilephone (9 dígitos PE).
+--   Join comercial: leads.utp_usuario_primera_actividad_exitosa ↔ systemusers.systemuserid
+--   Join oportunidad: leads.parentcontactid ↔ opportunities.customerid
 --   DEV: desplegar vistas en dev-utpbi-data-operation pero CRM_PROJECT = prd-utpbi-data-storage-pv.
---   IAM dev: roles/bigquery.dataViewer en prd-utpbi-data-storage-pv.raw_dynamic_crm.leads
+--   IAM dev: roles/bigquery.dataViewer en prd-utpbi-data-storage-pv.raw_dynamic_crm
+--            (leads, systemusers, opportunities)
 --
 -- Fuente MP3 (ETL onemarketer):
 --   raw_onemarketer.reporte_whatsapp_mp3  →  gcs_uri bajo getChats/{fecha}/media/

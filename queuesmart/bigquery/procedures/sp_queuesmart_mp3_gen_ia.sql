@@ -2,7 +2,7 @@
 -- SP: Gen IA MP3 QueeSmart — PRODUCCIÓN
 --
 -- Proyecto:  prd-utpbi-data-operation
--- Fuente:    raw_queuesmart.hist_queesmart_mp3_catalog (us-central1)
+-- Fuente:    raw_queue_smart.hist_queesmart_mp3_catalog (us-central1)
 -- SP + hist: adf_speech_analytics (US)
 -- Modelo:    adf_speech_analytics.gemini-2-5-flash
 -- Conexión:  US.utp_gen_ia_process (bucket GCS QueeSmart)
@@ -40,7 +40,7 @@ BEGIN
           PARTITION BY gcs_uri
           ORDER BY fecha_procesamiento DESC
         ) AS rn
-      FROM `prd-utpbi-data-operation.raw_queuesmart.hist_queesmart_mp3_catalog`
+      FROM `prd-utpbi-data-operation.raw_queue_smart.hist_queesmart_mp3_catalog`
       WHERE fecha_audio = v_fecha_proceso
         AND gcs_uri IS NOT NULL
     )
@@ -90,7 +90,7 @@ BEGIN
             PARTITION BY c.gcs_uri
             ORDER BY c.fecha_procesamiento DESC
           ) AS rn
-        FROM `prd-utpbi-data-operation.raw_queuesmart.hist_queesmart_mp3_catalog` AS c
+        FROM `prd-utpbi-data-operation.raw_queue_smart.hist_queesmart_mp3_catalog` AS c
         WHERE c.fecha_audio = DATE('%s')
           AND c.gcs_uri IS NOT NULL
       )

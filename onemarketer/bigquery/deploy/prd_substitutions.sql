@@ -4,7 +4,7 @@
 --   export DATASET_RAW=raw_onemarketer
 --   export DATASET_ANALYTICS=adf_speech_analytics
 --   export BQ_CONNECTION='`prd-utpbi-data-operation.US.utp_gen_ia_process`'
---   export GEMINI_MODEL='`prd-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`'
+--   export GEMINI_MODEL='`prd-utpbi-data-operation.adf_speech_analytics.gemini-3-5-flash`'
 --   export EXTERNAL_TABLE_TMP='`prd-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`'
 --   export CRM_PROJECT=prd-utpbi-data-storage-pv
 --   export CRM_DATASET=raw_dynamic_crm

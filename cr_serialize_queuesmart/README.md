@@ -1,4 +1,4 @@
-﻿# cr_serialize_queuesmart — VASO Whisper (sin hablantes)
+# cr_serialize_queuesmart — VASO Whisper (sin hablantes)
 
 Cloud Run Job **faster-whisper** sobre audios de producción, escribiendo en tablas
 **vaso**. No toca `hist_queuesmart_mp3_gen_ia_*`.

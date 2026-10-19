@@ -7,7 +7,7 @@
 --   DATASET_RAW         = raw_onemarketer
 --   DATASET_ANALYTICS   = adf_speech_analytics   -- o dataset dedicado en dev
 --   BQ_CONNECTION         = `dev-utpbi-data-operation.US.utp_gen_ia_process`
---   GEMINI_MODEL        = `dev-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`
+--   GEMINI_MODEL        = `dev-utpbi-data-operation.adf_speech_analytics.gemini-3-5-flash`
 --   EXTERNAL_TABLE_TMP  = `dev-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`
 --   CRM_PROJECT         = prd-utpbi-data-storage-pv   -- SIEMPRE prod CRM (no hay leads en dev)
 --   CRM_DATASET         = raw_dynamic_crm
@@ -17,7 +17,7 @@
 --   DATASET_RAW         = raw_onemarketer          (us-central1 — ETL)
 --   DATASET_ANALYTICS   = adf_speech_analytics     (US — Gen IA, igual que Genesys)
 --   BQ_CONNECTION         = `prd-utpbi-data-operation.US.utp_gen_ia_process`
---   GEMINI_MODEL        = `prd-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`
+--   GEMINI_MODEL        = `prd-utpbi-data-operation.adf_speech_analytics.gemini-3-5-flash`
 --   EXTERNAL_TABLE_TMP  = `prd-utpbi-data-operation.adf_speech_analytics.tmp_utp_external_table_onemarketer_whatsapp`
 --
 -- ERROR COMÚN: crear el SP en raw_onemarketer (us-central1) y referenciar adf_speech_analytics.

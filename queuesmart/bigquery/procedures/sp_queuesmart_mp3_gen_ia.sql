@@ -4,7 +4,7 @@
 -- Proyecto:  prd-utpbi-data-operation
 -- Fuente:    raw_queue_smart.hist_queesmart_mp3_catalog (us-central1)
 -- SP + hist: adf_speech_analytics (US)
--- Modelo:    adf_speech_analytics.gemini-2-5-flash
+-- Modelo:    adf_speech_analytics.gemini-3-5-flash
 -- Conexión:  US.utp_gen_ia_process (bucket GCS QueeSmart)
 --
 -- Patrón Genesys / OneMarketer: external table + AI.GENERATE_TABLE + hist
@@ -134,7 +134,7 @@ BEGIN
   CREATE OR REPLACE TEMP TABLE tmp_queuesmart_mp3_gen_ia_results AS
   SELECT ia.*
   FROM AI.GENERATE_TABLE(
-    MODEL `prd-utpbi-data-operation.adf_speech_analytics.gemini-2-5-flash`,
+    MODEL `prd-utpbi-data-operation.adf_speech_analytics.gemini-3-5-flash`,
     (
       SELECT
         STRUCT(

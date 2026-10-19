@@ -1,4 +1,4 @@
-# QueeSmart BigQuery — consolidación MP3 (patrón Genesys)
+﻿# QueeSmart BigQuery — consolidación MP3 (patrón Genesys)
 
 Pipeline analítico sobre audios QueeSmart, alineado al patrón **vaso de agua** de Genesys y al flujo Gen IA de OneMarketer.
 
@@ -39,7 +39,7 @@ bq query --use_legacy_sql=false --location=US \
 bq query --use_legacy_sql=false --location=US \
   < queuesmart/bigquery/tables/hist_queuesmart_mp3_gen_ia_prd.sql
 bq query --use_legacy_sql=false --location=US \
-  < queuesmart/bigquery/procedures/sp_queuesmart_mp3_gen_ia.sql
+  < sp_queuesmart_mp3_gen_ia.sql
 ```
 
 ## Ejecutar Gen IA
@@ -62,7 +62,7 @@ Ver `examples/call_sp_gen_ia_prd.sql` y vista `v_hist_queesmart_mp3_catalog_ia_i
 ### Gen IA — prerequisitos
 
 - Dataset `adf_speech_analytics` en **US** (no us-central1)
-- Modelo `gemini-2-5-flash` en ese dataset
+- Modelo `gemini-3-5-flash` en ese dataset
 - Conexión `utp_gen_ia_process` con acceso al bucket GCS QueeSmart
 - Tablas: `hist_queuesmart_mp3_gen_ia_process_data_raw` / `_prd`
 

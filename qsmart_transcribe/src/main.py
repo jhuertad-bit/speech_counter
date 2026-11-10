@@ -6,7 +6,8 @@ Roles (env QS_JOB_ROLE):
   prepare  → URIs del día desde BQ enriched → manifiesto JSONL + meta en GCS
   worker   → CLOUD_RUN_TASK_INDEX toma 1 línea, BatchRecognize, escribe hist BQ
 
-Orquestación: Cloud Workflows (después de consolidate, antes de analisis Gemini).
+Orquestación: Cloud Workflows (prod daily + vaso con QS_*_TABLE overrides).
+Deploy: speech_counter/qsmart_transcribe/cloudbuild.yaml
 """
 
 from __future__ import annotations

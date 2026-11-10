@@ -24,10 +24,19 @@
 #   - BigQuery Data Viewer/Editor en raw_queue_smart + adf_speech_analytics
 #   - roles/speech.client (Speech-to-Text API v2)
 #
-# Orquestación: Cloud Workflows (queuesmart/workflows/daily_pipeline.yaml)
+# Orquestación: Cloud Workflows (prod + vaso con env overrides).
 #   → no crear Scheduler apuntando a este Job.
+#
+# Submit manual (raíz speech_counter):
+#   gcloud builds submit --config=qsmart_transcribe/cloudbuild.yaml \
+#     --project=prd-utpbi-data-operation .
 
 substitutions:
+  # Defaults prd (el activador puede pisarlos)
+  _PROJECT_ID: 'prd-utpbi-data-operation'
+  _JOB_NAME: 'prd-utpbi-qsmart-transcribe'
+  _SERVICE_ACCOUNT: 'genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com'
+  _BUCKET_NAME: 'prd-utp-stg-queuesmart'
   _LOCATION: 'us-central1'
   _SOURCE_DIR: 'qsmart_transcribe/src'
   _MEMORY: '1Gi'

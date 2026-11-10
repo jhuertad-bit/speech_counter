@@ -145,7 +145,8 @@ echo "=== gcloud run jobs deploy ${_JOB_NAME} (source: ${SOURCE_DIR}/ + Dockerfi
 gcloud "${DEPLOY_ARGS[@]}"
 
 echo "=== Deploy OK ==="
-echo "Orquestación: Cloud Workflows (queuesmart/workflows/daily_pipeline.yaml)"
+echo "Orquestación: Cloud Workflows (prod daily + queuesmart-vaso-pipeline)."
+echo "Vaso: el workflow pasa QS_ENRICHED_TABLE / QS_HIST_* / QS_MANIFEST_PREFIX."
 echo "Manual prepare:"
 echo "  gcloud run jobs execute ${_JOB_NAME} --region=${LOCATION} --project=${_PROJECT_ID} \\"
 echo "    --tasks=1 --update-env-vars=QS_JOB_ROLE=prepare,SYNC_PROCESS_DATE=YYYY-MM-DD"

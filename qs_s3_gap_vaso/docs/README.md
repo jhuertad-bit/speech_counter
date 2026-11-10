@@ -43,4 +43,6 @@ gcloud run jobs execute $JOB --region=us-central1 --project=prd-utpbi-data-opera
   --update-env-vars=QS_JOB_ROLE=worker,SYNC_PROCESS_DATE=$DATE
 ```
 
-Siguiente paso del pipeline vaso: `queuesmart_vaso` (consolidate → Whisper → analisis). Ver [queuesmart_vaso/README.md](../queuesmart_vaso/README.md).
+Siguiente paso del pipeline vaso: `queuesmart_vaso` (consolidate → **STT Chirp** `qsmart_transcribe` → analisis), mismo patrón STT que `qs_s3_to_gcs`.
+
+Ver monorepo: `queuesmart_vaso/README.md` / workflow `queuesmart-vaso-pipeline`.

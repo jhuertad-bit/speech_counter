@@ -13,7 +13,7 @@
     "cloud_run_job_name": "prd-utpbi-mentores-gcs-copy",
     "service_account_email": "genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com",
     "scheduler_name": "prd-sch-mentores-gcs-copy",
-    "schedule": "0 5 * * *",
+    "schedule": "0 3 * * *",
     "schedule_timezone": "America/Lima"
   },
   "job": {

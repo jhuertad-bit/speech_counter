@@ -10,12 +10,37 @@
 # Args opcionales:
 #   process_date   YYYY-MM-DD (default: ayer Lima)
 #
-# Deploy:
+# Deploy workflow:
 #   gcloud workflows deploy prd-utpbi-mentores-gcs-copy \
 #     --project=prd-utpbi-data-operation \
 #     --location=us-central1 \
-#     --source=mentores_gcs_copy/workflows/daily_pipeline.yaml \
+#     --source=speech_counter/mentores_gcs_copy/workflows/daily_pipeline.yaml \
 #     --service-account=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+#
+# Run manual:
+#   gcloud workflows run prd-utpbi-mentores-gcs-copy --location=us-central1 \
+#     --project=prd-utpbi-data-operation --data='{}'
+#   gcloud workflows run prd-utpbi-mentores-gcs-copy --location=us-central1 \
+#     --project=prd-utpbi-data-operation \
+#     --data='{"process_date":"2026-11-08"}'
+#
+# Scheduler diario 03:00 America/Lima → procesa ayer (body {}):
+#   gcloud scheduler jobs create http prd-sch-mentores-gcs-copy \
+#     --project=prd-utpbi-data-operation \
+#     --location=us-central1 \
+#     --schedule="0 3 * * *" \
+#     --time-zone="America/Lima" \
+#     --uri="https://workflowexecutions.googleapis.com/v1/projects/prd-utpbi-data-operation/locations/us-central1/workflows/prd-utpbi-mentores-gcs-copy/executions" \
+#     --http-method=POST \
+#     --oauth-service-account-email=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com \
+#     --message-body='{}'
+#
+# Si el scheduler ya existe (antes a las 05:00):
+#   gcloud scheduler jobs update http prd-sch-mentores-gcs-copy \
+#     --project=prd-utpbi-data-operation \
+#     --location=us-central1 \
+#     --schedule="0 3 * * *" \
+#     --time-zone="America/Lima"
 # =============================================================================
 
 main:
@@ -26,7 +51,7 @@ main:
           - project_id: ${default(map.get(args, "project_id"), "prd-utpbi-data-operation")}
           - location: ${default(map.get(args, "location"), "us-central1")}
           - job_name: ${default(map.get(args, "job_name"), "prd-utpbi-mentores-gcs-copy")}
-          - gcs_bucket: ${default(map.get(args, "gcs_bucket"), "prd-utp-stg-citapromotor-9bd1430535b8")}
+          - gcs_bucket: ${default(map.get(args, "gcs_bucket"), "prd-utp-stg-mentores")}
           - manifest_prefix: ${default(map.get(args, "manifest_prefix"), "state/manifests/mentores")}
           - max_failed_tasks: ${default(map.get(args, "max_failed_tasks"), 0)}
           - process_date: ${default(map.get(args, "process_date"), null)}
@@ -41,6 +66,7 @@ main:
             steps:
               - compute_yesterday:
                   assign:
+                    # Lima = UTC-5. sys.now()-18000 ≈ Lima; -86400 = ayer.
                     - process_date: ${text.substring(time.format(sys.now() - 104400), 0, 10)}
 
     - require_bucket:
@@ -99,12 +125,22 @@ main:
             next: read_manifest_meta
 
     - read_manifest_meta:
-        call: http.get
-        args:
-          url: '${"https://storage.googleapis.com/storage/v1/b/" + gcs_bucket + "/o/" + text.url_encode(manifest_prefix + "/" + process_date + ".meta.json") + "?alt=media"}'
-          auth:
-            type: OAuth2
-        result: meta_http
+        try:
+          steps:
+            - fetch_manifest_meta:
+                call: http.get
+                args:
+                  url: '${"https://storage.googleapis.com/storage/v1/b/" + gcs_bucket + "/o/" + text.url_encode(manifest_prefix + "/" + process_date + ".meta.json") + "?alt=media"}'
+                  auth:
+                    type: OAuth2
+                result: meta_http
+        except:
+          as: meta_err
+          steps:
+            - raise_manifest_missing:
+                raise:
+                  message: '${"Manifiesto no encontrado en gs://" + gcs_bucket + "/" + manifest_prefix + "/" + process_date + ".meta.json — el prepare escribe en DEST_BUCKET_NAME del Job; el workflow debe usar el mismo gcs_bucket (config dest.bucket_name)."}'
+                  detail: ${meta_err}
 
     - parse_manifest_meta:
         assign:

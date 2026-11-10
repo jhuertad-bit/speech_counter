@@ -23,7 +23,7 @@ Carpeta GCS = `%d-%m-%Y` → ej. `audios/mentores/07-09-2026/`.
 |---------|--------|
 | Job | `prd-utpbi-mentores-gcs-copy` |
 | Workflow | `prd-utpbi-mentores-gcs-copy` |
-| Scheduler | `prd-sch-mentores-gcs-copy` · `0 5 * * *` Lima |
+| Scheduler | `prd-sch-mentores-gcs-copy` · `0 3 * * *` Lima (03:00) |
 | Dataset | `raw_cita_promotor` (mismo que promotores) |
 | Tabla catálogo | `hist_cita_mentor_audio_catalog` |
 | Manifiesto | `state/manifests/mentores/{fecha}.jsonl` |
@@ -56,8 +56,12 @@ bq query --use_legacy_sql=false --location=US \
 gcloud workflows deploy prd-utpbi-mentores-gcs-copy \
   --project=prd-utpbi-data-operation \
   --location=us-central1 \
-  --source=mentores_gcs_copy/workflows/daily_pipeline.yaml \
+  --source=speech_counter/mentores_gcs_copy/workflows/daily_pipeline.yaml \
   --service-account=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+
+# Scheduler 03:00 America/Lima (procesa ayer)
+chmod +x speech_counter/mentores_gcs_copy/scripts/setup-scheduler.sh
+./speech_counter/mentores_gcs_copy/scripts/setup-scheduler.sh
 ```
 
 ## Diferencias vs promotores
@@ -69,7 +73,7 @@ gcloud workflows deploy prd-utpbi-mentores-gcs-copy \
 | Tabla | `hist_cita_promotor_audio_catalog` | `hist_cita_mentor_audio_catalog` |
 | Manifiesto | `state/manifests/` | `state/manifests/mentores/` |
 | SP | `sp_utpbi_gen_ia_cita_promotor` | *(pendiente; workflow solo copy+catálogo)* |
-| Schedule | 04:00 Lima | 05:00 Lima |
+| Schedule | 04:00 Lima | **03:00 Lima** |
 
 ## Credenciales
 

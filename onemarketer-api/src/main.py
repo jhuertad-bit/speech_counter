@@ -148,6 +148,134 @@ def filter_and_normalize_message(message: Dict[str, Any], allowed_fields: Set[st
     return filtered_message
 
 
+# Alias / nested roots para listaCasosReporteAtenciones → lcra_*
+# (API post-2026-06-29 dejó de enviar lcra_* planos; filter rellenaba "").
+_LCRA_NESTED_ROOTS = {
+    "listacasosreporteatenciones",
+    "lista_casos_reporte_atenciones",
+    "lista casos reporte atenciones",
+    "lcra",
+}
+
+_LCRA_SUFFIX_TO_COLUMN = {
+    "campus": "lcra_campus",
+    "celular_in": "lcra_celular_in",
+    "celular in": "lcra_celular_in",
+    "dni": "lcra_dni",
+    "edad": "lcra_edad",
+    "fecha_cli": "lcra_fecha_cli",
+    "fecha cliente": "lcra_fecha_cli",
+    "fecha_cliente": "lcra_fecha_cli",
+    "flujo": "lcra_flujo",
+    "flujo_completo": "lcra_flujo_completo",
+    "flujo completo": "lcra_flujo_completo",
+    "hora_cli": "lcra_hora_cli",
+    "hora cliente": "lcra_hora_cli",
+    "hora_cliente": "lcra_hora_cli",
+    "lead": "lcra_lead",
+    "origen": "lcra_origen",
+    "postulante": "lcra_postulante",
+    "tipo_cli": "lcra_tipo_cli",
+    "tipo cliente": "lcra_tipo_cli",
+    "tipo_cliente": "lcra_tipo_cli",
+    "traza": "lcra_traza",
+    "traza_seg": "lcra_traza_seg",
+    "traza seg": "lcra_traza_seg",
+    "traza_txt": "lcra_traza_txt",
+    "traza txt": "lcra_traza_txt",
+}
+
+
+def _norm_field_key(key: str) -> str:
+    return re.sub(r"[\s_\-]+", " ", str(key).strip().lower()).strip()
+
+
+def _is_blank(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str) and value.strip() == "":
+        return True
+    return False
+
+
+def _resolve_lcra_column(key: str) -> str | None:
+    """Resuelve un nombre de campo API a columna lcra_* si aplica."""
+    raw = str(key).strip()
+    if raw.startswith("lcra_"):
+        return raw
+
+    norm = _norm_field_key(raw)
+    if norm in _LCRA_SUFFIX_TO_COLUMN:
+        return _LCRA_SUFFIX_TO_COLUMN[norm]
+
+    # "listaCasosReporteAtenciones Lead" / "listaCasosReporteAtenciones_Lead"
+    prefix_variants = (
+        "listacasosreporteatenciones ",
+        "lista casos reporte atenciones ",
+        "lcra ",
+    )
+    for prefix in prefix_variants:
+        if norm.startswith(prefix):
+            suffix = norm[len(prefix) :].strip()
+            return _LCRA_SUFFIX_TO_COLUMN.get(suffix)
+
+    # camelCase lcraLead → lcra_lead
+    camel = re.sub(r"(?<!^)(?=[A-Z])", "_", raw).lower()
+    if camel.startswith("lcra_") and camel in _LCRA_SUFFIX_TO_COLUMN.values():
+        return camel
+    if camel.startswith("lcra"):
+        maybe = "lcra_" + camel[4:].lstrip("_")
+        if maybe in _LCRA_SUFFIX_TO_COLUMN.values():
+            return maybe
+
+    return None
+
+
+def normalize_reporte_atenciones_lcra(message: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Flatten / alias de listaCasosReporteAtenciones hacia lcra_* antes del filtro de schema.
+    Conserva lcra_* ya poblados; no pisa valores no vacíos.
+    """
+    out = dict(message)
+
+    def _assign(column: str, value: Any) -> None:
+        if column and not _is_blank(value) and _is_blank(out.get(column)):
+            out[column] = value
+
+    # 1) Objeto / lista anidada bajo root listaCasos*
+    for key, value in list(message.items()):
+        root_norm = _norm_field_key(key)
+        root_compact = root_norm.replace(" ", "")
+        if root_norm not in _LCRA_NESTED_ROOTS and root_compact not in {
+            "listacasosreporteatenciones",
+            "lcra",
+        }:
+            continue
+
+        nested_items: List[Dict[str, Any]] = []
+        if isinstance(value, dict):
+            nested_items = [value]
+        elif isinstance(value, list):
+            nested_items = [item for item in value if isinstance(item, dict)]
+
+        for nested in nested_items:
+            for nk, nv in nested.items():
+                column = _resolve_lcra_column(nk)
+                if column is None:
+                    # Intentar prefijo implícito del root
+                    column = _resolve_lcra_column(f"listaCasosReporteAtenciones {nk}")
+                if column:
+                    _assign(column, nv)
+
+    # 2) Keys planas con nombre legacy / alias
+    for key, value in list(message.items()):
+        column = _resolve_lcra_column(key)
+        if column:
+            _assign(column, value)
+
+    return out
+
+
 def convert_time_format(message: Dict[str, Any], config: Dict[str, Any], table_type: str = None) -> Dict[str, Any]:
     """
     Convierte el formato de fecha de DD-MM-YYYY HH:MM:SS a YYYY-MM-DD HH:MM:SS
@@ -612,6 +740,10 @@ def extract_data_with_access_key(fecha_inicio: str, table_type: str, config: Dic
             # Convertir formato de fecha
             converted_message = convert_time_format(message, config, table_type)
 
+            # Alias/flatten lcra_* (reporteAtenciones / type=cases)
+            if table_name == "reporteAtenciones" or table_type == "cases":
+                converted_message = normalize_reporte_atenciones_lcra(converted_message)
+
             # Filtrar y normalizar campos según las definiciones de tabla
             if allowed_fields:
                 filtered_message = filter_and_normalize_message(converted_message, allowed_fields)
@@ -785,12 +917,37 @@ def generate_date_list(current_date: str, days_back: int) -> List[str]:
     return dates
 
 
-def process_date(fecha: str) -> bool:
+def generate_date_range(start_date: str, end_date: str) -> List[str]:
+    """Lista inclusiva YYYY-MM-DD desde start_date hasta end_date (ascendente)."""
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    if start > end:
+        start, end = end, start
+
+    dates: List[str] = []
+    cur = start
+    while cur <= end:
+        dates.append(cur.strftime("%Y-%m-%d"))
+        cur += timedelta(days=1)
+    return dates
+
+
+def _resolve_tables_filter(tables_filter: Set[str] | None = None) -> Set[str] | None:
+    if tables_filter is not None:
+        return tables_filter
+    raw = os.environ.get("BACKFILL_TABLES", "").strip()
+    if not raw:
+        return None
+    return {t.strip() for t in raw.split(",") if t.strip()}
+
+
+def process_date(fecha: str, tables_filter: Set[str] | None = None) -> bool:
     """
     Procesa datos para una fecha específica
 
     Args:
         fecha (str): Fecha en formato YYYY-MM-DD
+        tables_filter: Si se pasa (o via BACKFILL_TABLES), solo esas tablas
 
     Returns:
         bool: True si la ejecución fue exitosa, False en caso contrario
@@ -801,11 +958,13 @@ def process_date(fecha: str) -> bool:
         # Cargar configuración
         config = load_config('config/config.json')
         gcp_config = config.get('gcp', {})
+        allowed_tables = _resolve_tables_filter(tables_filter)
         print(
             f"[onemarketer-api] fecha={fecha} | "
             f"SA runtime={get_runtime_service_account_email()} | "
             f"project={gcp_config.get('project_id', '')} | "
-            f"dataset={gcp_config.get('dataset_id', '')}"
+            f"dataset={gcp_config.get('dataset_id', '')} | "
+            f"tables={sorted(allowed_tables) if allowed_tables else 'ALL'}"
         )
 
         # Procesar cada tabla configurada
@@ -813,6 +972,9 @@ def process_date(fecha: str) -> bool:
         for table_name, table_config in config.items():
             if table_name == 'gcp':
                 continue  # Saltar configuración de GCP
+
+            if allowed_tables and table_name not in allowed_tables:
+                continue
 
             if isinstance(table_config, dict) and 'enabled' in table_config:
                 # Procesar la tabla

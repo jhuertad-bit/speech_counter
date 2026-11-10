@@ -1,47 +1,57 @@
-# onemarketer-api → Cloud Run
+# onemarketer-api → Cloud Function Gen2 (HTTP)
+# Reemplaza el recurso desplegado a mano con deploy_gen2_fixed.sh.
 #
-# Variables de ambiente: ACTIVADOR → Variables de sustitución
-#   Obligatorias: _PROJECT_ID, _SERVICE_NAME, _OAUTH_SECRET
-#   Opcionales:   _LOCATION, _REPO_NAME, _IMAGE_NAME, _MEMORY, _TIMEOUT, _MAX_INSTANCES
+# Activador Cloud Build — include: onemarketer-api/**
+# Variables de sustitución:
+#   Obligatorias: _PROJECT_ID, _FUNCTION_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME,
+#                 _DATASET_ID, _OAUTH_SECRET
+#   Opcionales:   _LOCATION, _REPO_NAME, _MEMORY, _TIMEOUT, _CPU,
+#                 _MAX_INSTANCES, _CONCURRENCY, _ALLOW_UNAUTHENTICATED,
+#                 _SCHEDULER_NAME, _SERVICE_ACCOUNT_NAME
 #
-# _OAUTH_SECRET = id del secreto en Secret Manager (ej. dev_secret_onemarketer_api)
-# El JSON del secreto debe tener: {"user":"...","userpassword":"..."}
+# Descubrir el nombre real en PRD (Cloud Shell):
+#   gcloud functions list --project=prd-utpbi-data-operation --gen2 \
+#     --filter="name~onemarketer" --format="table(name,state,updateTime)"
+#   gcloud scheduler jobs list --project=prd-utpbi-data-operation \
+#     --location=us-central1 --filter="name~onemarketer"
+#
+# Ejemplo (ajusta _FUNCTION_NAME al que ya exista):
+#   _FUNCTION_NAME=prd-utpbi-onemarketer-api
+#   _OAUTH_SECRET=prd_secret_onemarketer_api
 substitutions:
   _LOCATION: 'us-central1'
   _REPO_NAME: 'gcf-artifacts'
-  _IMAGE_NAME: 'onemarketer-api'
   _MEMORY: '512Mi'
-  _TIMEOUT: '540'
+  _TIMEOUT: '540s'
+  _CPU: '1'
   _MAX_INSTANCES: '10'
+  _CONCURRENCY: '1'
+  _ALLOW_UNAUTHENTICATED: 'true'
+  _SOURCE_DIR: 'onemarketer-api/src'
 
 steps:
-  - name: 'gcr.io/cloud-builders/docker'
-    dir: 'onemarketer-api'
-    args:
-      - 'build'
-      - '-t'
-      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-      - '.'
-
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'push'
-      - '${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - 'run'
-      - 'deploy'
-      - '${_SERVICE_NAME}'
-      - '--project=${_PROJECT_ID}'
-      - '--image=${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
-      - '--region=${_LOCATION}'
-      - '--memory=${_MEMORY}'
-      - '--timeout=${_TIMEOUT}'
-      - '--max-instances=${_MAX_INSTANCES}'
-      - '--set-secrets=ONEMARKETER_API_CREDENTIALS=${_OAUTH_SECRET}:latest'
-      - '--allow-unauthenticated'
+      - 'onemarketer-api/scripts/cloudbuild_deploy.sh'
+    env:
+      - '_PROJECT_ID=${_PROJECT_ID}'
+      - '_FUNCTION_NAME=${_FUNCTION_NAME}'
+      - '_SERVICE_ACCOUNT=${_SERVICE_ACCOUNT}'
+      - '_BUCKET_NAME=${_BUCKET_NAME}'
+      - '_DATASET_ID=${_DATASET_ID}'
+      - '_OAUTH_SECRET=${_OAUTH_SECRET}'
+      - '_LOCATION=${_LOCATION}'
+      - '_REPO_NAME=${_REPO_NAME}'
+      - '_MEMORY=${_MEMORY}'
+      - '_TIMEOUT=${_TIMEOUT}'
+      - '_CPU=${_CPU}'
+      - '_MAX_INSTANCES=${_MAX_INSTANCES}'
+      - '_CONCURRENCY=${_CONCURRENCY}'
+      - '_ALLOW_UNAUTHENTICATED=${_ALLOW_UNAUTHENTICATED}'
+      - '_SOURCE_DIR=${_SOURCE_DIR}'
+      - '_SCHEDULER_NAME=${_SCHEDULER_NAME}'
+      - '_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}'
 
 options:
   logging: CLOUD_LOGGING_ONLY

@@ -78,17 +78,10 @@ if [[ ! -f "${SOURCE_DIR}/Dockerfile" ]]; then
   exit 1
 fi
 
-CONFIG_FILE="${SOURCE_DIR}/config/config.json"
-GCS_BUCKET="${_BUCKET_NAME:-}"
-GCS_REGION=""
-if [[ -f "${CONFIG_FILE}" ]]; then
-  if [[ -z "${GCS_BUCKET}" ]]; then
-    GCS_BUCKET="$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}'))['gcp']['bucket_name'])")"
-  fi
-  GCS_REGION="$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}'))['gcp']['region'])")"
-fi
-
-LOCATION="${_LOCATION:-${GCS_REGION:-us-central1}}"
+# Sin python3: la imagen cloud-sdk del step de Cloud Build no lo incluye.
+# Bucket/región vienen de sustituciones del activador (_BUCKET_NAME, _LOCATION).
+GCS_BUCKET="${_BUCKET_NAME}"
+LOCATION="${_LOCATION:-us-central1}"
 SCHEDULER_NAME="${_SCHEDULER_NAME:-${_JOB_NAME}-daily}"
 
 ENV_VARS="CONFIG_PATH=${CONFIG_PATH},PYTHONUNBUFFERED=1"
@@ -118,7 +111,7 @@ ENV_VARS+=",AWS_SECRET_ACCESS_KEY=${_AWS_SECRET_ACCESS_KEY}"
 ensure_gcs_bucket() {
   local bucket="$1"
   if [[ -z "${bucket}" ]]; then
-    echo "WARN: sin gcp.bucket_name en ${CONFIG_FILE}; omitiendo creación de bucket"
+    echo "WARN: sin _BUCKET_NAME; omitiendo creación de bucket"
     return 0
   fi
 

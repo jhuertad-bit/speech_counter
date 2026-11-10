@@ -7,6 +7,8 @@ Cloud Run Job **aparte** de `qs_s3_to_gcs`. Solo backfill de audios que el inges
 
 Destino GCS: mismo path productivo. Catálogo: solo `hist_queesmart_mp3_catalog_vaso`.
 
+Audio: mismo patrón que `qs_s3_to_gcs` (FLAC + loudnorm + split STT).
+
 ## Criterio
 
 ```
@@ -25,11 +27,19 @@ bq query --use_legacy_sql=false --location=US \
   < qs_s3_gap_vaso/bigquery/tables/hist_queesmart_mp3_catalog_vaso.sql
 ```
 
-## Deploy
+(si el DDL está solo en monorepo, usa esa ruta).
 
-Activador Cloud Build apuntando a `qs_s3_gap_vaso/cloudbuild.yaml` con `_JOB_NAME=prd-utpbi-s3-gap-vaso` y `_SOURCE_DIR=qs_s3_gap_vaso/src`.
+## Deploy (Cloud Build — repo speech_counter)
 
-## Ejecutar
+Activador apuntando a `qs_s3_gap_vaso/cloudbuild.yaml` con `_JOB_NAME=prd-utpbi-s3-gap-vaso` y `_SOURCE_DIR=qs_s3_gap_vaso/src`.
+
+```bash
+# desde raíz speech_counter
+gcloud builds submit --config=qs_s3_gap_vaso/cloudbuild.yaml \
+  --project=prd-utpbi-data-operation .
+```
+
+## Ejecutar (manual)
 
 ```bash
 JOB=prd-utpbi-s3-gap-vaso
@@ -43,6 +53,18 @@ gcloud run jobs execute $JOB --region=us-central1 --project=prd-utpbi-data-opera
   --update-env-vars=QS_JOB_ROLE=worker,SYNC_PROCESS_DATE=$DATE
 ```
 
-Siguiente paso del pipeline vaso: `queuesmart_vaso` (consolidate → **STT Chirp** `qsmart_transcribe` → analisis), mismo patrón STT que `qs_s3_to_gcs`.
+## Downstream (STT, no Whisper)
 
-Ver monorepo: `queuesmart_vaso/README.md` / workflow `queuesmart-vaso-pipeline`.
+Pipeline completo: `queuesmart_vaso` → consolidate → **`qsmart_transcribe`** → analisis.
+
+```bash
+gcloud builds submit --config=qsmart_transcribe/cloudbuild.yaml \
+  --project=prd-utpbi-data-operation .
+
+gcloud workflows deploy queuesmart-vaso-pipeline \
+  --source=queuesmart_vaso/workflows/vaso_pipeline.yaml \
+  --location=us-central1 --project=prd-utpbi-data-operation \
+  --service-account=genesys-audio-processor@prd-utpbi-data-operation.iam.gserviceaccount.com
+```
+
+Detalle: [queuesmart_vaso/README.md](../queuesmart_vaso/README.md).

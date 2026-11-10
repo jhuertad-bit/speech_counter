@@ -6,4 +6,4 @@ Misma prep de audio que `qs_s3_to_gcs` (FLAC + loudnorm + split STT). Downstream
 
 No modifica ni despliega `qs_s3_to_gcs`.
 
-Ver [docs/README.md](docs/README.md) y `queuesmart_vaso` (workflow).
+Deploy / pipeline: [docs/README.md](docs/README.md) y [queuesmart_vaso/README.md](../queuesmart_vaso/README.md) (**repo `speech_counter`** = Cloud Build).

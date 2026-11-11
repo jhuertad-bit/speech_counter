@@ -4,20 +4,19 @@
 # Activador Cloud Build — include: onemarketer-api/**
 # Variables de sustitución:
 #   Obligatorias: _PROJECT_ID, _FUNCTION_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME,
-#                 _DATASET_ID, _OAUTH_SECRET
+#                 _DATASET_ID
+#   OAuth (una de dos): _OAUTH_SECRET  O  (_OAUTH_USER + _OAUTH_PASSWORD)
 #   Opcionales:   _LOCATION, _REPO_NAME, _MEMORY, _TIMEOUT, _CPU,
-#                 _MAX_INSTANCES, _CONCURRENCY, _ALLOW_UNAUTHENTICATED,
+#                 _MAX_INSTANCES, _CONCURRENCY, _ALLOW_UNAUTHENTICATED (default false),
 #                 _SCHEDULER_NAME, _SERVICE_ACCOUNT_NAME
 #
-# Descubrir el nombre real en PRD (Cloud Shell):
-#   gcloud functions list --project=prd-utpbi-data-operation --gen2 \
-#     --filter="name~onemarketer" --format="table(name,state,updateTime)"
-#   gcloud scheduler jobs list --project=prd-utpbi-data-operation \
-#     --location=us-central1 --filter="name~onemarketer"
+# _ALLOW_UNAUTHENTICATED=true exige run.services.setIamPolicy → dejar false
+# si Cloud Build SA no puede tocar IAM (schedulers ya tienen la policy).
 #
-# Ejemplo (ajusta _FUNCTION_NAME al que ya exista):
+# Ejemplo:
 #   _FUNCTION_NAME=prd-utpbi-onemarketer-api
-#   _OAUTH_SECRET=prd_secret_onemarketer_api
+#   _OAUTH_USER=utppregradoapi
+#   _OAUTH_PASSWORD=...
 substitutions:
   _LOCATION: 'us-central1'
   _REPO_NAME: 'gcf-artifacts'
@@ -26,8 +25,11 @@ substitutions:
   _CPU: '1'
   _MAX_INSTANCES: '10'
   _CONCURRENCY: '1'
-  _ALLOW_UNAUTHENTICATED: 'true'
+  _ALLOW_UNAUTHENTICATED: 'false'
   _SOURCE_DIR: 'onemarketer-api/src'
+  _OAUTH_SECRET: ''
+  _OAUTH_USER: ''
+  _OAUTH_PASSWORD: ''
 
 steps:
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -41,6 +43,8 @@ steps:
       - '_BUCKET_NAME=${_BUCKET_NAME}'
       - '_DATASET_ID=${_DATASET_ID}'
       - '_OAUTH_SECRET=${_OAUTH_SECRET}'
+      - '_OAUTH_USER=${_OAUTH_USER}'
+      - '_OAUTH_PASSWORD=${_OAUTH_PASSWORD}'
       - '_LOCATION=${_LOCATION}'
       - '_REPO_NAME=${_REPO_NAME}'
       - '_MEMORY=${_MEMORY}'

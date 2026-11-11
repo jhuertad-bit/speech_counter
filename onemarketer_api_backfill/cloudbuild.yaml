@@ -6,20 +6,17 @@
 # Activador Cloud Build — include: onemarketer_api_backfill/**
 # Variables de sustitución:
 #   Obligatorias: _PROJECT_ID, _JOB_NAME, _SERVICE_ACCOUNT, _BUCKET_NAME,
-#                 _DATASET_ID, _OAUTH_SECRET
+#                 _DATASET_ID
+#   OAuth (una de dos): _OAUTH_SECRET  O  (_OAUTH_USER + _OAUTH_PASSWORD)
 #   Opcionales:   _LOCATION, _REPO_NAME, _IMAGE_NAME, _MEMORY, _CPU,
 #                 _TASK_TIMEOUT, _MAX_RETRIES, _BACKFILL_START_DATE,
 #                 _BACKFILL_END_DATE, _BACKFILL_TABLES
 #
-# Ejemplo PRD:
-#   _PROJECT_ID=prd-utpbi-data-operation
+# Ejemplo PRD (sin Secret Manager):
 #   _JOB_NAME=prd-utpbi-onemarketer-api-backfill
-#   _SERVICE_ACCOUNT=...@prd-utpbi-data-operation.iam.gserviceaccount.com
-#   _BUCKET_NAME=<bucket prd onemarketer>
-#   _DATASET_ID=raw_onemarketer
-#   _OAUTH_SECRET=prd_secret_onemarketer_api
+#   _OAUTH_USER=utppregradoapi
+#   _OAUTH_PASSWORD=...
 #   _BACKFILL_START_DATE=2026-06-29
-#   _TASK_TIMEOUT=86400s
 substitutions:
   _LOCATION: 'us-central1'
   _REPO_NAME: 'gcf-artifacts'
@@ -31,6 +28,9 @@ substitutions:
   _BACKFILL_START_DATE: '2026-06-29'
   _BACKFILL_END_DATE: ''
   _BACKFILL_TABLES: 'reporteAtenciones'
+  _OAUTH_SECRET: ''
+  _OAUTH_USER: ''
+  _OAUTH_PASSWORD: ''
 
 steps:
   - name: 'gcr.io/cloud-builders/docker'
@@ -58,6 +58,8 @@ steps:
       - '_BUCKET_NAME=${_BUCKET_NAME}'
       - '_DATASET_ID=${_DATASET_ID}'
       - '_OAUTH_SECRET=${_OAUTH_SECRET}'
+      - '_OAUTH_USER=${_OAUTH_USER}'
+      - '_OAUTH_PASSWORD=${_OAUTH_PASSWORD}'
       - '_IMAGE=${_LOCATION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO_NAME}/${_IMAGE_NAME}:$COMMIT_SHA'
       - '_LOCATION=${_LOCATION}'
       - '_MEMORY=${_MEMORY}'

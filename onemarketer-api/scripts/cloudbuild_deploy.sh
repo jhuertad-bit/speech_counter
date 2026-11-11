@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploy onemarketer-api como Cloud Function Gen2 (reemplaza el recurso existente).
-# Mismo patrón que onemarketer/ (gcloud functions deploy --source + Dockerfile).
-# Antes se desplegaba a mano con src/deploy_gen2_fixed.sh.
+# - NO toca IAM por defecto (evita 403 run.services.setIamPolicy).
+# - OAuth: _OAUTH_SECRET (Secret Manager) O bien _OAUTH_USER + _OAUTH_PASSWORD (env).
 set -euo pipefail
 
 missing=0
@@ -24,6 +24,8 @@ _SERVICE_ACCOUNT="$(trim "${_SERVICE_ACCOUNT:-}")"
 _BUCKET_NAME="$(trim "${_BUCKET_NAME:-}")"
 _DATASET_ID="$(trim "${_DATASET_ID:-}")"
 _OAUTH_SECRET="$(trim "${_OAUTH_SECRET:-}")"
+_OAUTH_USER="$(trim "${_OAUTH_USER:-}")"
+_OAUTH_PASSWORD="$(trim "${_OAUTH_PASSWORD:-}")"
 _LOCATION="$(trim "${_LOCATION:-}")"
 _REPO_NAME="$(trim "${_REPO_NAME:-}")"
 _MEMORY="$(trim "${_MEMORY:-}")"
@@ -42,11 +44,22 @@ require "_FUNCTION_NAME" "${_FUNCTION_NAME}"
 require "_SERVICE_ACCOUNT" "${_SERVICE_ACCOUNT}"
 require "_BUCKET_NAME" "${_BUCKET_NAME}"
 require "_DATASET_ID" "${_DATASET_ID}"
-require "_OAUTH_SECRET" "${_OAUTH_SECRET}"
 if [[ -n "${_SERVICE_ACCOUNT}" && "${_SERVICE_ACCOUNT}" != *"@"* ]]; then
   echo "ERROR: _SERVICE_ACCOUNT debe ser email completo" >&2
   missing=1
 fi
+
+# OAuth: secreto SM O pair user/password (si no pueden crear secretos)
+if [[ -n "${_OAUTH_SECRET}" ]]; then
+  echo "OK _OAUTH_SECRET=${_OAUTH_SECRET}"
+elif [[ -n "${_OAUTH_USER}" && -n "${_OAUTH_PASSWORD}" ]]; then
+  echo "OK _OAUTH_USER=${_OAUTH_USER} (password via env, sin Secret Manager)"
+else
+  echo "ERROR: configura _OAUTH_SECRET O bien (_OAUTH_USER + _OAUTH_PASSWORD)." >&2
+  echo "  Sin permiso para crear secretos → usa _OAUTH_USER / _OAUTH_PASSWORD en el activador." >&2
+  missing=1
+fi
+
 if [[ "${missing}" -ne 0 ]]; then
   exit 1
 fi
@@ -58,7 +71,8 @@ TIMEOUT="${_TIMEOUT:-540s}"
 CPU="${_CPU:-1}"
 MAX_INSTANCES="${_MAX_INSTANCES:-10}"
 CONCURRENCY="${_CONCURRENCY:-1}"
-ALLOW_UNAUTH="${_ALLOW_UNAUTHENTICATED:-true}"
+# false por defecto: no llama setIamPolicy (403 si Cloud Build SA no tiene run.admin IAM)
+ALLOW_UNAUTH="${_ALLOW_UNAUTHENTICATED:-false}"
 SOURCE_DIR="${_SOURCE_DIR:-onemarketer-api/src}"
 
 if [[ ! -f "${SOURCE_DIR}/Dockerfile" ]]; then
@@ -83,11 +97,14 @@ fi
 if [[ -n "${_SERVICE_ACCOUNT_NAME}" ]]; then
   ENV_VARS+=",GCP_SERVICE_ACCOUNT_NAME=${_SERVICE_ACCOUNT_NAME}"
 fi
+if [[ -z "${_OAUTH_SECRET}" ]]; then
+  ENV_VARS+=",ONEMARKETER_OAUTH_USER=${_OAUTH_USER}"
+  ENV_VARS+=",ONEMARKETER_OAUTH_PASSWORD=${_OAUTH_PASSWORD}"
+fi
 
 echo "=== Habilitando APIs ==="
 gcloud services enable cloudfunctions.googleapis.com run.googleapis.com \
-  cloudbuild.googleapis.com secretmanager.googleapis.com \
-  bigquery.googleapis.com storage.googleapis.com \
+  cloudbuild.googleapis.com bigquery.googleapis.com storage.googleapis.com \
   --project="${_PROJECT_ID}" --quiet
 
 DEPLOY_ARGS=(
@@ -106,8 +123,11 @@ DEPLOY_ARGS=(
   --concurrency="${CONCURRENCY}"
   --service-account="${_SERVICE_ACCOUNT}"
   --set-env-vars="${ENV_VARS}"
-  --set-secrets="ONEMARKETER_API_CREDENTIALS=${_OAUTH_SECRET}:latest"
 )
+
+if [[ -n "${_OAUTH_SECRET}" ]]; then
+  DEPLOY_ARGS+=(--set-secrets="ONEMARKETER_API_CREDENTIALS=${_OAUTH_SECRET}:latest")
+fi
 
 if [[ -n "${REPO_NAME}" ]]; then
   DEPLOY_ARGS+=(
@@ -116,10 +136,10 @@ if [[ -n "${REPO_NAME}" ]]; then
 fi
 
 if [[ "${ALLOW_UNAUTH}" == "true" ]]; then
-  echo "Modo público: --allow-unauthenticated (Scheduler HTTP o curl)"
+  echo "Modo público: --allow-unauthenticated (requiere run.services.setIamPolicy)"
   DEPLOY_ARGS+=(--allow-unauthenticated)
 else
-  echo "Modo autenticado: invoker OIDC requerido"
+  echo "Sin tocar IAM (default). Schedulers existentes siguen con la policy actual."
 fi
 
 echo "=== gcloud functions deploy ${_FUNCTION_NAME} (source: ${SOURCE_DIR}) ==="
@@ -135,6 +155,6 @@ URI="$(gcloud functions describe "${_FUNCTION_NAME}" \
 echo "=== Deploy OK ==="
 echo "Function: ${_FUNCTION_NAME}"
 echo "URI: ${URI}"
-echo "Probar:"
+echo "Probar (si la policy permite allUsers o tu identity):"
 echo "  curl -sS -X POST '${URI}' -H 'Content-Type: application/json' \\"
 echo "    -d '{\"current_date\":\"TODAY\",\"days_back\":0}'"

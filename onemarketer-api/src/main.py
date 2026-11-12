@@ -1023,12 +1023,20 @@ def process_table(table_name: str, table_config: Dict[str, Any], gcp_config: Dic
         print(f"Coerce con schema local ({len(schema_for_coerce)} campos)")
     before = messages[0] if messages else {}
     messages = [coerce_message_types(m, schema_for_coerce) for m in messages]
+    # fecha_evento es REQUIRED en BQ PRD — null rompe el load
+    required_filled = 0
+    for m in messages:
+        if m.get("fecha_evento") in (None, ""):
+            m["fecha_evento"] = fecha_inicio  # YYYY-MM-DD
+            required_filled += 1
     after = messages[0] if messages else {}
     print(
         f"Tipos coercidos (schema_campos={len(schema_for_coerce or [])}). "
+        f"fecha_evento relleno={required_filled}/{len(messages)}. "
         f"sample waiting_time_in_case: {before.get('waiting_time_in_case')!r} → {after.get('waiting_time_in_case')!r}; "
         f"id_session_log: {before.get('id_session_log')!r} → {after.get('id_session_log')!r}; "
         f"agent_messages: {before.get('agent_messages')!r} → {after.get('agent_messages')!r}; "
+        f"fecha_evento: {before.get('fecha_evento')!r} → {after.get('fecha_evento')!r}; "
         f"lcra_flujo_completo: {before.get('lcra_flujo_completo')!r} → {after.get('lcra_flujo_completo')!r}"
     )
 

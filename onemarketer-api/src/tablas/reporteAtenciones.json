@@ -260,8 +260,8 @@
   {
     "name": "fecha_evento",
     "type": "DATE",
-    "mode": "NULLABLE",
-    "description": "Fecha evento (columna presente en BQ PRD; null si la API no la envía)"
+    "mode": "REQUIRED",
+    "description": "Fecha del día del reporte (REQUIRED en BQ PRD). Si la API no la manda, se rellena con day=YYYY-MM-DD."
   },
   {
     "name": "fecha_procesamiento",

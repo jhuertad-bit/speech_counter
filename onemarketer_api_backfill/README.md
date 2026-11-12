@@ -15,7 +15,8 @@ Si cambias `onemarketer-api/src` (schema, flatten, load), hay que **tocar esta c
 
 Fix 2026-11-12: load BQ usa schema de la tabla destino (evita 400 por `fecha_evento` ausente en JSON local).  
 Fix 2026-11-12b: campos faltantes → JSON `null` (no `""`); `""` rompe DATE/INTEGER al load.  
-Fix 2026-11-12c: coerce `"0"`→`0` etc. según schema antes del JSONL/load.
+Fix 2026-11-12c: coerce `"0"`→`0` etc. según schema antes del JSONL/load.  
+Fix 2026-11-12e: Job cwd → `tablas/` (no `src/tablas/`); coerce con schema BQ real; log `errors[]`.
 
 ## Activador
 

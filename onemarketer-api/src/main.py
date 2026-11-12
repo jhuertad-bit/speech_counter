@@ -235,15 +235,34 @@ def coerce_value_for_bq(value: Any, field_type: str) -> Any:
     return value
 
 
+# Fallback si no carga el JSON de schema (Job cwd distinto).
+_INTEGER_FIELDS_FALLBACK = {
+    "waiting_time_in_case",
+    "id_session_log",
+    "user_messages",
+    "agent_messages",
+    "lcra_flujo_completo",
+    "poll_answer_8",
+    "empty",
+    "total_messages",
+}
+
+
 def coerce_message_types(
-    message: Dict[str, Any], schema: List[Dict[str, Any]]
+    message: Dict[str, Any], schema: List[Dict[str, Any]] | None = None
 ) -> Dict[str, Any]:
     """Aplica tipos del schema JSON a un mensaje (API suele mandar todo como string)."""
-    type_by_name = {str(f.get("name", "")).strip(): f.get("type", "STRING") for f in schema}
+    type_by_name = {
+        str(f.get("name", "")).strip(): f.get("type", "STRING")
+        for f in (schema or [])
+    }
     out: Dict[str, Any] = {}
     for key, value in message.items():
-        ft = type_by_name.get(key)
-        out[key] = coerce_value_for_bq(value, ft) if ft else value
+        clean_key = str(key).strip()
+        ft = type_by_name.get(clean_key)
+        if not ft and clean_key in _INTEGER_FIELDS_FALLBACK:
+            ft = "INTEGER"
+        out[clean_key] = coerce_value_for_bq(value, ft) if ft else value
     return out
 
 
@@ -544,44 +563,63 @@ def delete_partition_by_date(table_ref: str, partition_date: str, client: bigque
 
 def load_table_schema(table_name: str) -> List[Dict[str, Any]]:
     """
-    Carga el esquema de una tabla desde el archivo JSON correspondiente
-
-    Args:
-        table_name (str): Nombre de la tabla
-
-    Returns:
-        List[Dict[str, Any]]: Esquema de la tabla
+    Carga el esquema JSON local.
+    En Cloud Run Job cwd=/app/src → tablas/ (NO src/tablas/).
     """
-    schema_file = f"src/tablas/{table_name}.json"
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "tablas", f"{table_name}.json"),
+        os.path.join("tablas", f"{table_name}.json"),
+        os.path.join("src", "tablas", f"{table_name}.json"),
+    ]
+    schema_file = next((p for p in candidates if os.path.isfile(p)), None)
+    if not schema_file:
+        print(f"Advertencia: No se encontró schema para {table_name}. Probado: {candidates}")
+        return []
+
     try:
-        with open(schema_file, 'r', encoding='utf-8') as f:
+        with open(schema_file, "r", encoding="utf-8") as f:
             schema = json.load(f)
         print(f"Esquema cargado desde: {schema_file}")
 
-        # Validar estructura del esquema
         if not isinstance(schema, list):
-            print(f"Error: El esquema debe ser una lista de campos")
+            print("Error: El esquema debe ser una lista de campos")
             return []
 
         for i, field in enumerate(schema):
             if not isinstance(field, dict):
                 print(f"Error: El campo {i} debe ser un diccionario")
                 return []
-
-            required_keys = ['name', 'type', 'mode']
-            for key in required_keys:
+            for key in ("name", "type", "mode"):
                 if key not in field:
                     print(f"Error: El campo {i} debe tener la propiedad '{key}'")
                     return []
+            field["name"] = str(field["name"]).strip()
 
         print(f"Esquema validado: {len(schema)} campos definidos")
         return schema
-
-    except FileNotFoundError:
-        print(f"Advertencia: No se encontró el archivo de esquema {schema_file}, usando detección automática")
-        return []
     except Exception as e:
-        print(f"Error al cargar el esquema: {e}")
+        print(f"Error al cargar el esquema desde {schema_file}: {e}")
+        return []
+
+
+def load_bq_table_schema_dicts(
+    gcp_config: Dict[str, Any], table_id: str
+) -> List[Dict[str, Any]]:
+    """Schema real de BQ (tipos con los que falla el load si el JSONL no coincide)."""
+    try:
+        project_id = gcp_config.get("project_id")
+        dataset_id = gcp_config.get("dataset_id")
+        client = bigquery.Client(project=project_id)
+        table = client.get_table(f"{project_id}.{dataset_id}.{table_id}")
+        out = [
+            {"name": f.name, "type": f.field_type, "mode": f.mode}
+            for f in table.schema
+        ]
+        print(f"Schema BQ destino: {len(out)} campos")
+        return out
+    except Exception as e:
+        print(f"No se pudo leer schema BQ de {table_id}: {e}")
         return []
 
 
@@ -752,8 +790,20 @@ def create_bigquery_table(gcs_uri: str, gcp_config: Dict[str, Any], table_id: st
             job_config=job_config
         )
 
-        # Esperar a que termine el job
-        load_job.result()
+        try:
+            load_job.result()
+        except Exception as load_exc:
+            print(f"Error al crear/cargar tabla en BigQuery: {load_exc}")
+            print(f"Load job id: {getattr(load_job, 'job_id', None)}")
+            errs = getattr(load_job, "errors", None) or []
+            print(f"errors[] count={len(errs)}")
+            for i, err in enumerate(errs[:30]):
+                print(f"  errors[{i}]={err}")
+            # Algunas filas vienen en error_result
+            er = getattr(load_job, "error_result", None)
+            if er:
+                print(f"  error_result={er}")
+            raise
 
         # Obtener información de la tabla
         table = client.get_table(table_ref)
@@ -965,11 +1015,22 @@ def process_table(table_name: str, table_config: Dict[str, Any], gcp_config: Dic
         print(f"No se encontraron registros para la tabla {table_name}")
         return
 
-    # Coerce tipos (API manda INTEGER como "0") antes de JSONL / load BQ
-    schema_for_coerce = load_table_schema(table_name)
-    if schema_for_coerce:
-        messages = [coerce_message_types(m, schema_for_coerce) for m in messages]
-        print(f"Tipos coercidos según schema ({len(schema_for_coerce)} campos)")
+    # Coerce tipos según schema BQ real (el load usa ese schema). Fallback: JSON local.
+    table_id = bigquery_config.get("table_id", table_name)
+    schema_for_coerce = load_bq_table_schema_dicts(gcp_config, table_id)
+    if not schema_for_coerce:
+        schema_for_coerce = load_table_schema(table_name)
+        print(f"Coerce con schema local ({len(schema_for_coerce)} campos)")
+    before = messages[0] if messages else {}
+    messages = [coerce_message_types(m, schema_for_coerce) for m in messages]
+    after = messages[0] if messages else {}
+    print(
+        f"Tipos coercidos (schema_campos={len(schema_for_coerce or [])}). "
+        f"sample waiting_time_in_case: {before.get('waiting_time_in_case')!r} → {after.get('waiting_time_in_case')!r}; "
+        f"id_session_log: {before.get('id_session_log')!r} → {after.get('id_session_log')!r}; "
+        f"agent_messages: {before.get('agent_messages')!r} → {after.get('agent_messages')!r}; "
+        f"lcra_flujo_completo: {before.get('lcra_flujo_completo')!r} → {after.get('lcra_flujo_completo')!r}"
+    )
 
     # Guardar en formato JSONL
     save_to_jsonl(messages, output_file)

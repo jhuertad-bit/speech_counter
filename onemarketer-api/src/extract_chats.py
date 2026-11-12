@@ -294,8 +294,9 @@ def create_bigquery_table(gcs_uri: str, gcp_config: Dict[str, Any], table_id: st
 
         # Verificar si la tabla existe
         table_exists = False
+        existing_table = None
         try:
-            client.get_table(table_ref)
+            existing_table = client.get_table(table_ref)
             table_exists = True
             print(f"Tabla {table_ref} ya existe, saltando creación")
             # Mostrar información de particiones si la tabla existe
@@ -402,18 +403,23 @@ def create_bigquery_table(gcs_uri: str, gcp_config: Dict[str, Any], table_id: st
             write_disposition=getattr(bigquery.WriteDisposition, write_disposition),
         )
 
-        # Agregar esquema si está disponible y no se creó la tabla previamente
-        if schema and not (not table_exists and schema):
-            job_config.schema = [bigquery.SchemaField(field['name'], field['type'], mode=field['mode']) for field in schema]
-
-
+        # Tabla existente: schema destino (evita drift). Nueva: JSON local.
+        job_config.ignore_unknown_values = True
+        if table_exists and existing_table is not None and existing_table.schema:
+            job_config.schema = list(existing_table.schema)
+            print(f"Usando esquema de tabla destino ({len(existing_table.schema)} campos)")
+        elif schema:
+            job_config.schema = [
+                bigquery.SchemaField(field['name'], field['type'], mode=field['mode'])
+                for field in schema
+            ]
+            print(f"Usando esquema personalizado con {len(schema)} campos")
+        else:
+            job_config.autodetect = True
+            print("Usando detección automática de esquema")
 
         print(f"Cargando datos en BigQuery: {table_ref}")
         print(f"Desde archivo: {gcs_uri}")
-        if schema:
-            print(f"Usando esquema personalizado con {len(schema)} campos")
-        else:
-            print("Usando detección automática de esquema")
 
         # Ejecutar job de carga
         load_job = client.load_table_from_uri(

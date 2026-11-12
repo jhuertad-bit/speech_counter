@@ -515,8 +515,9 @@ def create_bigquery_table(gcs_uri: str, gcp_config: Dict[str, Any], table_id: st
 
         # Verificar si la tabla existe
         table_exists = False
+        existing_table = None
         try:
-            client.get_table(table_ref)
+            existing_table = client.get_table(table_ref)
             table_exists = True
             print(f"Tabla {table_ref} ya existe, saltando creación")
             # Mostrar información de particiones si la tabla existe
@@ -623,12 +624,22 @@ def create_bigquery_table(gcs_uri: str, gcp_config: Dict[str, Any], table_id: st
             write_disposition=getattr(bigquery.WriteDisposition, write_disposition),
         )
 
-        # Usar el esquema definido en la carpeta tablas si está disponible
-        if schema:
-            job_config.schema = [bigquery.SchemaField(field['name'], field['type'], mode=field['mode']) for field in schema]
+        # Tabla existente: usar SU schema (evita drift ej. fecha_evento ausente en JSON local).
+        # Tabla nueva: schema de tablas/*.json o autodetect.
+        job_config.ignore_unknown_values = True
+        if table_exists and existing_table is not None and existing_table.schema:
+            job_config.schema = list(existing_table.schema)
+            print(
+                f"Usando esquema de tabla destino ({len(existing_table.schema)} campos); "
+                f"no el JSON local (puede estar desfasado)"
+            )
+        elif schema:
+            job_config.schema = [
+                bigquery.SchemaField(field['name'], field['type'], mode=field['mode'])
+                for field in schema
+            ]
             print(f"Usando esquema definido en tablas/{table_id}.json")
         else:
-            # Fallback a detección automática si no hay esquema
             job_config.autodetect = True
             print("Usando detección automática de esquema (no se encontró esquema personalizado)")
 

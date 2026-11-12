@@ -256,5 +256,11 @@
     "type": "STRING",
     "mode": "NULLABLE",
     "description": "DEPRECADO EN DOCUMENTACION API: Revisar"
+  },
+  {
+    "name": "fecha_evento",
+    "type": "DATE",
+    "mode": "NULLABLE",
+    "description": "Fecha evento (columna presente en BQ PRD; null si la API no la envía)"
   }
 ]

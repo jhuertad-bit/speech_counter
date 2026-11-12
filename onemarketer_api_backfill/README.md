@@ -9,7 +9,11 @@ Carpeta **aparte** de `onemarketer-api` para que el activador Cloud Build no red
 | Servicio diario | `onemarketer-api/` → `cloudbuild.yaml` |
 | Job backfill | `onemarketer_api_backfill/` → `cloudbuild.yaml` |
 
-La imagen COPY `onemarketer-api/src` (fix lcra + ETL). Tras cambiar el fix en `onemarketer-api`, hay que **volver a buildear este Job** (manual o commit touch aquí).
+La imagen COPY `onemarketer-api/src` (fix lcra + ETL + load BQ).  
+**Importante:** el activador Cloud Build solo ve `onemarketer_api_backfill/**`.  
+Si cambias `onemarketer-api/src` (schema, flatten, load), hay que **tocar esta carpeta** (o build manual) para que el Job tome el código nuevo.
+
+Fix 2026-11-12: load BQ usa schema de la tabla destino (evita 400 por `fecha_evento` ausente en JSON local).
 
 ## Activador
 

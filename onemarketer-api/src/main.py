@@ -134,18 +134,117 @@ def filter_and_normalize_message(message: Dict[str, Any], allowed_fields: Set[st
     Returns:
         Dict[str, Any]: Mensaje filtrado y normalizado
     """
+    # Alias de keys que la API manda con espacios / casing distinto
+    aliases = {
+        "Time Wait Operator": "time_wait_operator",
+        "time wait operator": "time_wait_operator",
+    }
+    normalized_in = {}
+    for key, value in message.items():
+        normalized_in[aliases.get(key, key)] = value
+
     filtered_message = {}
 
-    # Incluir solo los campos que están en la lista de campos permitidos
+    # Faltantes → null (JSON), no "". "" rompe DATE/INTEGER/TIMESTAMP en load BQ.
     for field_name in allowed_fields:
-        if field_name in message and message[field_name] is not None:
-            # Si el campo existe y tiene valor, incluirlo
-            filtered_message[field_name] = message[field_name]
+        if field_name in normalized_in and normalized_in[field_name] is not None:
+            filtered_message[field_name] = normalized_in[field_name]
         else:
-            # Si el campo no existe o es None, colocar cadena vacía
-            filtered_message[field_name] = ""
+            filtered_message[field_name] = None
 
     return filtered_message
+
+
+def _parse_hms_to_seconds(raw: str) -> int | None:
+    """'00:09:05' / '0:09:05' → segundos. No confundir con fechas."""
+    s = raw.strip()
+    if not re.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?", s):
+        return None
+    parts = [int(p) for p in s.split(":")]
+    if len(parts) == 2:
+        h, m, sec = 0, parts[0], parts[1]
+    else:
+        h, m, sec = parts[0], parts[1], parts[2]
+    if m >= 60 or sec >= 60:
+        return None
+    return h * 3600 + m * 60 + sec
+
+
+def coerce_value_for_bq(value: Any, field_type: str) -> Any:
+    """
+    Coerce strings de la API a tipos BQ.
+    Soporta formato viejo y nuevo:
+      - INTEGER: \"0\" | \"00:00:04\" (duración → segundos)
+      - TIMESTAMP/DATE: \"\" / placeholders → null
+    """
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip() == "":
+        return None
+
+    t = (field_type or "STRING").upper()
+    if t in ("INTEGER", "INT64"):
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        s = str(value).strip()
+        # Formato nuevo: waiting_time_in_case = "00:00:00"
+        as_sec = _parse_hms_to_seconds(s)
+        if as_sec is not None:
+            return as_sec
+        try:
+            return int(float(s))
+        except (TypeError, ValueError):
+            return None
+    if t in ("FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"):
+        if isinstance(value, (int, float)):
+            return float(value)
+        s = str(value).strip()
+        as_sec = _parse_hms_to_seconds(s)
+        if as_sec is not None:
+            return float(as_sec)
+        try:
+            return float(s)
+        except (TypeError, ValueError):
+            return None
+    if t == "BOOLEAN":
+        if isinstance(value, bool):
+            return value
+        s = str(value).strip().lower()
+        if s in ("1", "true", "t", "yes", "y", "si", "sí"):
+            return True
+        if s in ("0", "false", "f", "no", "n"):
+            return False
+        return None
+    if t in ("TIMESTAMP", "DATETIME", "DATE"):
+        s = str(value).strip()
+        # Placeholders / basura que la API mete en timestamps
+        if s.lower() in {
+            "not closed yet",
+            "null",
+            "none",
+            "nan",
+            "n/a",
+        }:
+            return None
+        return s
+    # STRING y resto
+    return value
+
+
+def coerce_message_types(
+    message: Dict[str, Any], schema: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Aplica tipos del schema JSON a un mensaje (API suele mandar todo como string)."""
+    type_by_name = {str(f.get("name", "")).strip(): f.get("type", "STRING") for f in schema}
+    out: Dict[str, Any] = {}
+    for key, value in message.items():
+        ft = type_by_name.get(key)
+        out[key] = coerce_value_for_bq(value, ft) if ft else value
+    return out
 
 
 # Alias / nested roots para listaCasosReporteAtenciones → lcra_*
@@ -865,6 +964,12 @@ def process_table(table_name: str, table_config: Dict[str, Any], gcp_config: Dic
     if not messages:
         print(f"No se encontraron registros para la tabla {table_name}")
         return
+
+    # Coerce tipos (API manda INTEGER como "0") antes de JSONL / load BQ
+    schema_for_coerce = load_table_schema(table_name)
+    if schema_for_coerce:
+        messages = [coerce_message_types(m, schema_for_coerce) for m in messages]
+        print(f"Tipos coercidos según schema ({len(schema_for_coerce)} campos)")
 
     # Guardar en formato JSONL
     save_to_jsonl(messages, output_file)

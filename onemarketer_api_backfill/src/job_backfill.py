@@ -12,7 +12,7 @@ Env:
 Reusa process_date / normalize_reporte_atenciones_lcra de onemarketer-api (main.py).
 Carpeta separada de onemarketer-api para no redesplegar el servicio HTTP en cada build.
 
-Rebuild bump 2026-11-12: schema load desde tabla BQ (fecha_evento drift).
+Rebuild bump 2026-11-12d: dual format API (segundos vs HH:MM:SS) + coerce + schema BQ.
 """
 
 from __future__ import annotations

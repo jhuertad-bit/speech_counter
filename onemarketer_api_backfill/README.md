@@ -13,7 +13,9 @@ La imagen COPY `onemarketer-api/src` (fix lcra + ETL + load BQ).
 **Importante:** el activador Cloud Build solo ve `onemarketer_api_backfill/**`.  
 Si cambias `onemarketer-api/src` (schema, flatten, load), hay que **tocar esta carpeta** (o build manual) para que el Job tome el código nuevo.
 
-Fix 2026-11-12: load BQ usa schema de la tabla destino (evita 400 por `fecha_evento` ausente en JSON local).
+Fix 2026-11-12: load BQ usa schema de la tabla destino (evita 400 por `fecha_evento` ausente en JSON local).  
+Fix 2026-11-12b: campos faltantes → JSON `null` (no `""`); `""` rompe DATE/INTEGER al load.  
+Fix 2026-11-12c: coerce `"0"`→`0` etc. según schema antes del JSONL/load.
 
 ## Activador
 

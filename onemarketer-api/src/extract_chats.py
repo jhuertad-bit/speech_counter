@@ -120,8 +120,8 @@ def filter_and_normalize_message(message: Dict[str, Any], allowed_fields: Set[st
             # Si el campo existe y tiene valor, incluirlo
             filtered_message[field_name] = message[field_name]
         else:
-            # Si el campo no existe o es None, colocar cadena vacía
-            filtered_message[field_name] = ""
+            # Faltantes → null (JSON). "" rompe DATE/INTEGER/TIMESTAMP en load BQ.
+            filtered_message[field_name] = None
 
     return filtered_message
 

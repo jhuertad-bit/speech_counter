@@ -134,10 +134,10 @@ def filter_and_normalize_message(message: Dict[str, Any], allowed_fields: Set[st
     Returns:
         Dict[str, Any]: Mensaje filtrado y normalizado
     """
-    # Alias de keys que la API manda con espacios / casing distinto
+    # BQ tiene la columna literal "Time Wait Operator" (con espacios).
     aliases = {
-        "Time Wait Operator": "time_wait_operator",
-        "time wait operator": "time_wait_operator",
+        "time_wait_operator": "Time Wait Operator",
+        "time wait operator": "Time Wait Operator",
     }
     normalized_in = {}
     for key, value in message.items():
@@ -235,17 +235,8 @@ def coerce_value_for_bq(value: Any, field_type: str) -> Any:
     return value
 
 
-# Fallback si no carga el JSON de schema (Job cwd distinto).
-_INTEGER_FIELDS_FALLBACK = {
-    "waiting_time_in_case",
-    "id_session_log",
-    "user_messages",
-    "agent_messages",
-    "lcra_flujo_completo",
-    "poll_answer_8",
-    "empty",
-    "total_messages",
-}
+# PRD reporteAtenciones: casi todo es STRING en BQ. No forzar INTEGER.
+_INTEGER_FIELDS_FALLBACK: set[str] = set()
 
 
 def coerce_message_types(
@@ -264,6 +255,55 @@ def coerce_message_types(
             ft = "INTEGER"
         out[clean_key] = coerce_value_for_bq(value, ft) if ft else value
     return out
+
+
+def _default_for_required_field(field_type: str, fecha_inicio: str) -> Any:
+    """Default seguro para columnas REQUIRED de BQ cuando la API no manda valor."""
+    t = (field_type or "STRING").upper()
+    if t == "DATE":
+        return fecha_inicio
+    if t in ("TIMESTAMP", "DATETIME"):
+        # PRD: fecha_procesamiento es DATETIME REQUIRED
+        return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    if t in ("INTEGER", "INT64"):
+        return 0
+    if t in ("FLOAT", "FLOAT64", "NUMERIC", "BIGNUMERIC"):
+        return 0.0
+    if t == "BOOLEAN":
+        return False
+    return ""
+
+
+def fill_required_bq_fields(
+    messages: List[Dict[str, Any]],
+    schema: List[Dict[str, Any]] | None,
+    fecha_inicio: str,
+) -> tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    Rellena campos REQUIRED del schema BQ que vienen null/ausentes.
+    Evita: Only optional fields can be set to NULL (fecha_evento, fecha_procesamiento, …).
+    """
+    required = []
+    for f in schema or []:
+        mode = str(f.get("mode", "NULLABLE")).upper()
+        if mode == "REQUIRED":
+            required.append(
+                (str(f.get("name", "")).strip(), str(f.get("type", "STRING")).upper())
+            )
+    # Fallback mínimo si no hay schema BQ
+    if not required:
+        required = [
+            ("fecha_evento", "DATE"),
+            ("fecha_procesamiento", "TIMESTAMP"),
+        ]
+
+    stats: Dict[str, int] = {name: 0 for name, _ in required}
+    for m in messages:
+        for name, ftype in required:
+            if m.get(name) in (None, ""):
+                m[name] = _default_for_required_field(ftype, fecha_inicio)
+                stats[name] = stats.get(name, 0) + 1
+    return messages, stats
 
 
 # Alias / nested roots para listaCasosReporteAtenciones → lcra_*
@@ -291,6 +331,8 @@ _LCRA_SUFFIX_TO_COLUMN = {
     "hora cliente": "lcra_hora_cli",
     "hora_cliente": "lcra_hora_cli",
     "lead": "lcra_lead",
+    "leadid": "lcra_leadid",
+    "lead_id": "lcra_leadid",
     "origen": "lcra_origen",
     "postulante": "lcra_postulante",
     "tipo_cli": "lcra_tipo_cli",
@@ -301,6 +343,12 @@ _LCRA_SUFFIX_TO_COLUMN = {
     "traza seg": "lcra_traza_seg",
     "traza_txt": "lcra_traza_txt",
     "traza txt": "lcra_traza_txt",
+    "createdon": "lcra_createdon",
+    "created_on": "lcra_createdon",
+    "onetoone_detallefuenteorigenname": "lcra_onetoone_detallefuenteorigenname",
+    "onetoone_fuenteorigenname": "lcra_onetoone_fuenteorigenname",
+    "onetoone_sededeseadaname": "lcra_onetoone_sededeseadaname",
+    "utp_flag_sin_sedename": "lcra_utp_flag_sin_sedename",
 }
 
 
@@ -1023,20 +1071,19 @@ def process_table(table_name: str, table_config: Dict[str, Any], gcp_config: Dic
         print(f"Coerce con schema local ({len(schema_for_coerce)} campos)")
     before = messages[0] if messages else {}
     messages = [coerce_message_types(m, schema_for_coerce) for m in messages]
-    # fecha_evento es REQUIRED en BQ PRD — null rompe el load
-    required_filled = 0
-    for m in messages:
-        if m.get("fecha_evento") in (None, ""):
-            m["fecha_evento"] = fecha_inicio  # YYYY-MM-DD
-            required_filled += 1
+    # REQUIRED en BQ no admiten JSON null (fecha_evento, fecha_procesamiento, …)
+    messages, required_stats = fill_required_bq_fields(
+        messages, schema_for_coerce, fecha_inicio=fecha_inicio
+    )
     after = messages[0] if messages else {}
     print(
         f"Tipos coercidos (schema_campos={len(schema_for_coerce or [])}). "
-        f"fecha_evento relleno={required_filled}/{len(messages)}. "
+        f"required_fill={required_stats}. "
         f"sample waiting_time_in_case: {before.get('waiting_time_in_case')!r} → {after.get('waiting_time_in_case')!r}; "
         f"id_session_log: {before.get('id_session_log')!r} → {after.get('id_session_log')!r}; "
         f"agent_messages: {before.get('agent_messages')!r} → {after.get('agent_messages')!r}; "
         f"fecha_evento: {before.get('fecha_evento')!r} → {after.get('fecha_evento')!r}; "
+        f"fecha_procesamiento: {before.get('fecha_procesamiento')!r} → {after.get('fecha_procesamiento')!r}; "
         f"lcra_flujo_completo: {before.get('lcra_flujo_completo')!r} → {after.get('lcra_flujo_completo')!r}"
     )
 

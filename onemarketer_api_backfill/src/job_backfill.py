@@ -12,7 +12,7 @@ Env:
 Reusa process_date / normalize_reporte_atenciones_lcra de onemarketer-api (main.py).
 Carpeta separada de onemarketer-api para no redesplegar el servicio HTTP en cada build.
 
-Rebuild bump 2026-11-12f: fecha_evento REQUIRED ← day YYYY-MM-DD (no null).
+Rebuild bump 2026-11-12h: schema PRD exacto (STRING + DATETIME REQUIRED).
 """
 
 from __future__ import annotations

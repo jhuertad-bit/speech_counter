@@ -17,7 +17,9 @@ Fix 2026-11-12: load BQ usa schema de la tabla destino (evita 400 por `fecha_eve
 Fix 2026-11-12b: campos faltantes → JSON `null` (no `""`); `""` rompe DATE/INTEGER al load.  
 Fix 2026-11-12c: coerce `"0"`→`0` etc. según schema antes del JSONL/load.  
 Fix 2026-11-12e: Job cwd → `tablas/` (no `src/tablas/`); coerce con schema BQ real; log `errors[]`.  
-Fix 2026-11-12f: `fecha_evento` REQUIRED en BQ → siempre `day` YYYY-MM-DD (nunca null).
+Fix 2026-11-12f: `fecha_evento` REQUIRED en BQ → siempre `day` YYYY-MM-DD (nunca null).  
+Fix 2026-11-12g: rellena **todos** los REQUIRED del schema BQ (`fecha_procesamiento` → now UTC, etc.).  
+Fix 2026-11-12h: `reporteAtenciones.json` = schema PRD real (casi todo STRING; `fecha_procesamiento` DATETIME; col `"Time Wait Operator"`).
 
 ## Activador
 

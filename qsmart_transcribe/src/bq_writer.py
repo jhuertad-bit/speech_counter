@@ -100,7 +100,7 @@ def _insert_row_dml(client: bigquery.Client, table: str, row: dict[str, Any]) ->
         bigquery.ScalarQueryParameter("source_file_name", "STRING", row["source_file_name"]),
         bigquery.ScalarQueryParameter("audio", "STRING", row["audio"]),
         bigquery.ScalarQueryParameter("recordid", "STRING", row["recordid"]),
-        bigquery.ScalarQueryParameter("rowid", "STRING", row["rowid"]),
+        bigquery.ScalarQueryParameter("rowid", "INT64", row["rowid"]),
         bigquery.ScalarQueryParameter("codagencia", "STRING", row["codagencia"]),
         bigquery.ScalarQueryParameter("gcs_path", "STRING", row["gcs_path"]),
         bigquery.ScalarQueryParameter("campus_code", "STRING", row["campus_code"]),
@@ -172,8 +172,12 @@ def upsert_transcription(
         "file_name": item.get("file_name"),
         "source_file_name": item.get("source_file_name"),
         "audio": item.get("audio"),
-        "recordid": item.get("recordid"),
-        "rowid": item.get("rowid"),
+        "recordid": (
+            None
+            if item.get("recordid") is None or item.get("recordid") == ""
+            else str(item.get("recordid"))
+        ),
+        "rowid": _as_int(item.get("rowid")),
         "codagencia": item.get("codagencia"),
         "gcs_path": item.get("gcs_path"),
         "campus_code": item.get("campus_code"),

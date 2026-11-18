@@ -122,7 +122,7 @@ def transcribe_gcs_uri(config: dict[str, Any], gcs_uri: str) -> dict[str, Any]:
     )
 
     operation = client.batch_recognize(request=request)
-    response = operation.result(timeout=int(stt.get("timeout_seconds", 1800)))
+    response = operation.result(timeout=int(stt.get("timeout_seconds", 2700)))
 
     file_result = response.results.get(gcs_uri)
     if file_result is None and response.results:

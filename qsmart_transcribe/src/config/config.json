@@ -18,6 +18,7 @@
     "language_codes": ["es-US"],
     "min_speaker_count": 2,
     "max_speaker_count": 2,
-    "recognizer_id": "_"
+    "recognizer_id": "_",
+    "timeout_seconds": 2700
   }
 }

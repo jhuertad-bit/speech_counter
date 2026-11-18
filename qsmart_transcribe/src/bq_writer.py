@@ -92,6 +92,26 @@ _PRD_COLS: tuple[str, ...] = (
     "load_date",
 )
 
+# Límite práctico para INSERT DML vía jobs API (evita HTTP 413 Request Entity Too Large).
+_MAX_JSON_CHARS = 400_000
+
+
+def _json_for_bq(payload: Any, *, gcs_uri: str) -> str:
+    raw = json.dumps(payload or {}, ensure_ascii=False, default=str)
+    if len(raw) <= _MAX_JSON_CHARS:
+        return raw
+    stub = {
+        "_truncated": True,
+        "_original_chars": len(raw),
+        "_gcs_uri": gcs_uri,
+        "note": "Respuesta Chirp omitida (payload > límite BQ jobs); ver columna transcripcion",
+    }
+    print(
+        f"[bq_writer] full_response truncado chars={len(raw)} gcs_uri={gcs_uri}"
+    )
+    return json.dumps(stub, ensure_ascii=False)
+
+
 _PARAM_TYPES: dict[str, str] = {
     "process_date": "DATE",
     "gcs_uri": "STRING",
@@ -205,6 +225,8 @@ def upsert_transcription(
             return None
         return float(value)
 
+    json_payload = _json_for_bq(stt.get("full_response"), gcs_uri=gcs_uri)
+
     row = {
         "process_date": _parse_process_date(item.get("process_date")),
         "gcs_uri": gcs_uri,
@@ -236,8 +258,8 @@ def upsert_transcription(
         "numcelular": item.get("numcelular"),
         "clientetipo": item.get("clientetipo"),
         "database": item.get("database"),
-        "json_text": json.dumps(stt.get("full_response") or {}, ensure_ascii=False, default=str),
-        "full_response": json.dumps(stt.get("full_response") or {}, ensure_ascii=False, default=str),
+        "json_text": json_payload,
+        "full_response": json_payload,
         "status": stt.get("status") or "ERROR",
         "transcripcion": stt.get("transcripcion") or None,
         "resumen": None,

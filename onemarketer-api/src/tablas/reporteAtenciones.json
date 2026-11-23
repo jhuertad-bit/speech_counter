@@ -3,7 +3,7 @@
     "name": "fecha_evento",
     "type": "DATE",
     "mode": "REQUIRED",
-    "description": "REQUIRED BQ. Día del reporte YYYY-MM-DD."
+    "description": "REQUIRED BQ. Día de negocio Lima = DATE(start_time) o day del request."
   },
   {
     "name": "fecha_procesamiento",

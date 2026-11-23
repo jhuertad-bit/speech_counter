@@ -46,7 +46,7 @@ def main() -> int:
     args = parser.parse_args()
 
     access_key = fetch_access_key(timeout=30)
-    url = f"{args.base_url}?type=cases&day={args.day}&id_context={args.context}&gmt=GMT-03"
+    url = f"{args.base_url}?type=cases&day={args.day}&id_context={args.context}&gmt=GMT-05"
     print(f"GET/POST {url}")
     resp = requests.post(url, headers={"X-Signature": access_key}, timeout=60)
     resp.raise_for_status()

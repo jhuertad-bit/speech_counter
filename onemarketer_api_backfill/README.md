@@ -19,7 +19,8 @@ Fix 2026-11-12c: coerce `"0"`→`0` etc. según schema antes del JSONL/load.
 Fix 2026-11-12e: Job cwd → `tablas/` (no `src/tablas/`); coerce con schema BQ real; log `errors[]`.  
 Fix 2026-11-12f: `fecha_evento` REQUIRED en BQ → siempre `day` YYYY-MM-DD (nunca null).  
 Fix 2026-11-12g: rellena **todos** los REQUIRED del schema BQ (`fecha_procesamiento` → now UTC, etc.).  
-Fix 2026-11-12h: `reporteAtenciones.json` = schema PRD real (casi todo STRING; `fecha_procesamiento` DATETIME; col `"Time Wait Operator"`).
+Fix 2026-11-12h: `reporteAtenciones.json` = schema PRD real (casi todo STRING; `fecha_procesamiento` DATETIME; col `"Time Wait Operator"`).  
+Fix 2026-11-23: timezone Lima — API `gmt=GMT-05` (antes GMT-03 = +2h); `fecha_evento` = DATE(start_time); `TODAY` = America/Lima; `first_answer_message` normalizado.
 
 ## Activador
 

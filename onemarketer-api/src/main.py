@@ -14,6 +14,7 @@ import sys
 from google.cloud import storage
 from google.cloud import bigquery
 import re
+import pytz
 
 from auth_onemarketer import fetch_access_key
 from gcp_runtime_log import (
@@ -23,6 +24,17 @@ from gcp_runtime_log import (
     get_runtime_service_account_email,
     print_runtime_gcp_info,
 )
+
+# America/Lima = UTC-5. Antes se pedía gmt=GMT-03 (+2h vs Lima) y BQ
+# interpretaba TIMESTAMP naive como UTC. Pedimos GMT-05 y guardamos reloj
+# local naive para que la partición DAY(start_time) coincida con fecha_evento.
+LIMA_TZ = pytz.timezone("America/Lima")
+DEFAULT_API_GMT = "GMT-05"
+
+
+def lima_today() -> str:
+    """Fecha de negocio en America/Lima (YYYY-MM-DD)."""
+    return datetime.now(LIMA_TZ).strftime("%Y-%m-%d")
 
 
 def get_access_key() -> str:
@@ -442,74 +454,104 @@ def normalize_reporte_atenciones_lcra(message: Dict[str, Any]) -> Dict[str, Any]
     return out
 
 
+def _parse_om_datetime_to_lima_naive(time_str: Any) -> Any:
+    """
+    Normaliza datetimes OneMarketer a reloj Lima YYYY-MM-DD HH:MM:SS (naive).
+    Null/especiales → None. Si no matchea, devuelve el valor original.
+    """
+    if time_str is None:
+        return None
+    if not isinstance(time_str, str):
+        time_str = str(time_str)
+    raw = time_str.strip()
+    if raw in ("Not closed yet", "NA", "N/A", "null", "NULL", "None", ""):
+        return None
+
+    match = re.match(
+        r"^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2}):(\d{2})$", raw
+    )
+    if match:
+        dd, mm, yyyy, hh, minute, ss = match.groups()
+        return f"{yyyy}-{mm}-{dd} {hh}:{minute}:{ss}"
+
+    date_match = re.match(r"^(\d{2})-(\d{2})-(\d{4})$", raw)
+    if date_match:
+        dd, mm, yyyy = date_match.groups()
+        return f"{yyyy}-{mm}-{dd}"
+
+    # Ya viene ISO / BQ-like: YYYY-MM-DD[ HH:MM:SS][offset opcional]
+    iso = re.match(
+        r"^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}):(\d{2}):(\d{2}))?", raw
+    )
+    if iso:
+        d = iso.group(1)
+        if iso.group(2) is None:
+            return d
+        return f"{d} {iso.group(2)}:{iso.group(3)}:{iso.group(4)}"
+
+    return time_str
+
+
 def convert_time_format(message: Dict[str, Any], config: Dict[str, Any], table_type: str = None) -> Dict[str, Any]:
     """
-    Convierte el formato de fecha de DD-MM-YYYY HH:MM:SS a YYYY-MM-DD HH:MM:SS
-    Solo para campos definidos como TIMESTAMP en los esquemas de BigQuery
-
-    Args:
-        message (Dict[str, Any]): Mensaje con campos de fecha a convertir
-        config (Dict[str, Any]): Configuración del sistema
-        table_type (str): Tipo de tabla para determinar qué campos convertir
-
-    Returns:
-        Dict[str, Any]: Mensaje con el formato de fecha convertido
+    Convierte datetimes OM (DD-MM-YYYY …) a reloj Lima YYYY-MM-DD HH:MM:SS.
+    TIMESTAMP BQ: naive a propósito (partición DAY(start_time) = día de negocio).
+    STRING datetime (first_answer_message): mismo reloj Lima.
     """
-    # Verificar si la conversión de fecha está habilitada
     if not config.get('date_conversion', {}).get('enabled', True):
         return message
 
-    # Campos TIMESTAMP según el esquema de BigQuery
     timestamp_fields = {
         'reporteAtenciones': ['start_time', 'end_time'],
-        'reporteAccesoOperadores': ['begin_time', 'end_time']
+        'reporteAccesoOperadores': ['begin_time', 'end_time'],
+        'cases': ['start_time', 'end_time'],
+        'operator': ['begin_time', 'end_time'],
+    }
+    string_datetime_fields = {
+        'reporteAtenciones': ['first_answer_message'],
+        'cases': ['first_answer_message'],
     }
 
-    # Obtener campos a convertir según el tipo de tabla
-    if table_type and table_type in timestamp_fields:
-        date_fields = timestamp_fields[table_type]
-    else:
-        # Si no se especifica el tipo de tabla, usar todos los campos TIMESTAMP
-        date_fields = ['start_time', 'end_time', 'begin_time']
+    date_fields = list(timestamp_fields.get(table_type or '', ['start_time', 'end_time', 'begin_time']))
+    for extra in string_datetime_fields.get(table_type or '', []):
+        if extra not in date_fields:
+            date_fields.append(extra)
 
     for field in date_fields:
-        if field in message:
-            time_str = message[field]
+        if field not in message:
+            continue
+        original = message[field]
+        converted = _parse_om_datetime_to_lima_naive(original)
+        if converted is None and original not in (None,):
+            message[field] = None
+            continue
+        if converted != original and converted is not None:
+            message[field] = converted
+        elif (
+            isinstance(original, str)
+            and original.strip()
+            and converted == original
+            and original.strip() not in ("Not closed yet", "NA", "N/A", "null", "NULL", "None", "")
+            and not re.match(r"^\d{4}-\d{2}-\d{2}", original.strip())
+        ):
+            print(f"Advertencia: No se pudo convertir el formato de fecha en {field}: {original}")
 
-            # Verificar si es un valor especial que necesita conversión especial
-            if time_str == "Not closed yet":
-                # Convertir "Not closed yet" a null para campos TIMESTAMP
-                message[field] = None
-                continue
-            elif time_str in ["NA", "N/A", "null", "NULL", "None", ""]:
-                # Convertir valores especiales a null para campos TIMESTAMP
-                message[field] = None
-                continue
+    return message
 
-            # Patrón para DD-MM-YYYY HH:MM:SS
-            pattern = r'^(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2}):(\d{2})$'
-            match = re.match(pattern, time_str)
 
-            if match:
-                dd, mm, yyyy, hh, min_sec, ss = match.groups()
-
-                # Crear nueva fecha en formato YYYY-MM-DD HH:MM:SS
-                new_time = f"{yyyy}-{mm}-{dd} {hh}:{min_sec}:{ss}"
-                message[field] = new_time
-            else:
-                # Intentar con formato DD-MM-YYYY (solo fecha)
-                date_pattern = r'^(\d{2})-(\d{2})-(\d{4})$'
-                date_match = re.match(date_pattern, time_str)
-                if date_match:
-                    dd, mm, yyyy = date_match.groups()
-                    new_date = f"{yyyy}-{mm}-{dd}"
-                    message[field] = new_date
-                else:
-                    # Solo mostrar advertencia si no es un valor especial conocido
-                    special_values = ["Not closed yet", "NA", "N/A", "null", "NULL", "None"]
-                    if time_str not in special_values:
-                        print(f"Advertencia: No se pudo convertir el formato de fecha en {field}: {time_str}")
-
+def apply_fecha_evento(message: Dict[str, Any], fecha_inicio: str) -> Dict[str, Any]:
+    """
+    fecha_evento = día de negocio Lima.
+    Prioridad: DATE(start_time) → fecha del request (API day).
+    """
+    start = message.get("start_time")
+    if isinstance(start, str):
+        m = re.match(r"^(\d{4}-\d{2}-\d{2})", start.strip())
+        if m:
+            message["fecha_evento"] = m.group(1)
+            return message
+    if message.get("fecha_evento") in (None, ""):
+        message["fecha_evento"] = fecha_inicio
     return message
 
 
@@ -884,8 +926,9 @@ def extract_data_with_access_key(fecha_inicio: str, table_type: str, config: Dic
     context = api_config.get('context', 1)
     timeout = api_config.get('timeout', 30)
 
-    # Construir URL con parámetros
-    url = f"{base_url}?type={table_type}&day={fecha_inicio}&id_context={context}&gmt=GMT-03"
+    # GMT-05 = America/Lima (antes GMT-03 desplazaba +2h el reloj local)
+    gmt = str(api_config.get("gmt") or DEFAULT_API_GMT).strip() or DEFAULT_API_GMT
+    url = f"{base_url}?type={table_type}&day={fecha_inicio}&id_context={context}&gmt={gmt}"
 
     # Obtener access_key fresco para cada llamada
     access_key = get_access_key()
@@ -945,8 +988,9 @@ def extract_data_with_access_key(fecha_inicio: str, table_type: str, config: Dic
         filtered_count = 0
 
         for i, message in enumerate(messages):
-            # Convertir formato de fecha
+            # Convertir formato de fecha (reloj Lima)
             converted_message = convert_time_format(message, config, table_type)
+            converted_message = apply_fecha_evento(converted_message, fecha_inicio)
 
             # Alias/flatten lcra_* (reporteAtenciones / type=cases)
             if table_name == "reporteAtenciones" or table_type == "cases":
@@ -960,6 +1004,10 @@ def extract_data_with_access_key(fecha_inicio: str, table_type: str, config: Dic
                 final_message = filtered_message
             else:
                 final_message = converted_message
+
+            # Reaplicar fecha_evento por si el filter la omitió/vació
+            if table_name == "reporteAtenciones" or table_type == "cases":
+                final_message = apply_fecha_evento(final_message, fecha_inicio)
 
             converted_messages.append(final_message)
 
@@ -1266,7 +1314,7 @@ def main(request, context=None):
         # Validar formato de fecha
         try:
             if current_date.upper() == 'TODAY':
-                current_date = datetime.now().strftime('%Y-%m-%d')
+                current_date = lima_today()
             else:
                 datetime.strptime(current_date, '%Y-%m-%d')
         except ValueError:

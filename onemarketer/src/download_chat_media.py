@@ -497,8 +497,8 @@ def get_download_api(api_cfg: dict[str, Any], fechaini: str) -> dict[str, Any]:
     context = api_cfg.get("context", 1)
     key = api_cfg["key"]
     timeout = api_cfg.get("timeout", 300)
-    max_retries = api_cfg.get("max_retries", 3)
-    retry_delay = api_cfg.get("retry_delay", 5)
+    max_retries = api_cfg.get("max_retries", 5)
+    retry_delay = api_cfg.get("retry_delay", 30)
     auth_mode = api_cfg.get("auth_mode", "header")
 
     params = {"context": context, "fechaini": fechaini}
@@ -514,7 +514,10 @@ def get_download_api(api_cfg: dict[str, Any], fechaini: str) -> dict[str, Any]:
     for attempt in range(max_retries):
         try:
             if attempt > 0:
-                print(f"Reintento descargachats {attempt + 1}/{max_retries}...")
+                print(
+                    f"Reintento descargachats {attempt + 1}/{max_retries} "
+                    f"tras {retry_delay}s..."
+                )
                 time.sleep(retry_delay)
             print(f"API descargachats: context={context}, fechaini={fechaini}")
             response = requests.get(base_url, headers=headers, params=params, timeout=timeout)
@@ -525,7 +528,9 @@ def get_download_api(api_cfg: dict[str, Any], fechaini: str) -> dict[str, Any]:
             return data
         except requests.RequestException as exc:
             last_error = exc
-            print(f"Error descargachats intento {attempt + 1}: {exc}")
+            print(f"Error descargachats intento {attempt + 1}/{max_retries}: {exc}")
+            if attempt + 1 < max_retries:
+                print(f"   Esperando {retry_delay}s antes del siguiente intento...")
 
     raise RuntimeError(f"descargachats falló tras {max_retries} intentos: {last_error}") from last_error
 

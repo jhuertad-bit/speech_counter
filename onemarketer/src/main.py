@@ -93,15 +93,25 @@ def process_date(fecha: str, force_reprocess: bool = False) -> bool:
             print(f"\n=== Medios: reporteChats → descargachats → GCS/BQ ({fecha}) ===")
             if "api" in media_cfg:
                 media_cfg["api"]["fechaini"] = fecha
-            media_result = process_media_for_date(
-                fecha,
-                config,
-                chat_messages=chat_messages or None,
-                force_reprocess=force_reprocess,
-            )
-            if media_result.get("failed", 0) > 0:
-                print(f"⚠️  Descarga de medios con {media_result['failed']} error(es)")
-        
+            try:
+                media_result = process_media_for_date(
+                    fecha,
+                    config,
+                    chat_messages=chat_messages or None,
+                    force_reprocess=force_reprocess,
+                )
+                if media_result.get("failed", 0) > 0:
+                    print(
+                        f"⚠️  Descarga de medios con {media_result['failed']} error(es) "
+                        f"— chats OK; se continúa el día"
+                    )
+            except Exception as media_exc:
+                # 502/timeouts en descargachats no deben tumbar reporteChats ni el workflow.
+                print(
+                    f"⚠️  Medios fallaron tras retries ({media_exc}) "
+                    f"— fecha {fecha} se marca OK por chats; reintentar medios aparte"
+                )
+
         print(f"✅ Fecha {fecha} procesada exitosamente - {tables_processed} tabla(s) procesada(s)")
         return True
         
